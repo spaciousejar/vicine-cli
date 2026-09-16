@@ -13,6 +13,18 @@ A POSIX shell script to search, stream, and download movies, series and anime fr
 ## Installation
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/install.sh | sh
+```
+
+System-wide (requires root):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/install.sh | sudo sh -s /usr/local/bin
+```
+
+Manual (git):
+
+```sh
 git clone https://github.com/spaciousejar/vicine-cli.git
 cd vicine-cli
 chmod +x vicine
