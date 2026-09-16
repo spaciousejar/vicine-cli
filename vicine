@@ -7,17 +7,18 @@ version_number="1.0.0"
 
 # TTY detection — disable colors when piped
 if [ -t 1 ]; then
-    C_RESET="\033[0m"
-    C_BOLD="\033[1m"
-    C_DIM="\033[2m"
-    C_RED="\033[1;31m"
-    C_GREEN="\033[1;32m"
-    C_YELLOW="\033[1;33m"
-    C_BLUE="\033[1;34m"
-    C_CYAN="\033[1;36m"
-    C_MAGENTA="\033[1;35m"
-    C_WHITE="\033[1;37m"
-    C_GRAY="\033[2;37m"
+    ESC=$(printf '\033')
+    C_RESET="${ESC}[0m"
+    C_BOLD="${ESC}[1m"
+    C_DIM="${ESC}[2m"
+    C_RED="${ESC}[1;31m"
+    C_GREEN="${ESC}[1;32m"
+    C_YELLOW="${ESC}[1;33m"
+    C_BLUE="${ESC}[1;34m"
+    C_CYAN="${ESC}[1;36m"
+    C_MAGENTA="${ESC}[1;35m"
+    C_WHITE="${ESC}[1;37m"
+    C_GRAY="${ESC}[2;37m"
 else
     C_RESET=""
     C_BOLD=""
@@ -81,7 +82,7 @@ menu() {
 help_info() {
     cat <<EOF
 
-${C_CYAN}${C_BOLD}  vicine${C_RESET} ${C_DIM}v${version_number}${C_RESET}  ${C_GRAY}Watch and download movies from hicine.sbs${C_RESET}
+${C_CYAN}${C_BOLD}  vicine${C_RESET} ${C_DIM}v${version_number}${C_RESET}  ${C_GRAY}Watch and download movies, series amd anime for free${C_RESET}
 
 ${C_WHITE}Usage:${C_RESET}
     ${0##*/} [options] [query]
@@ -91,10 +92,7 @@ ${C_WHITE}Commands:${C_RESET}
     ${C_DIM}(default)${C_RESET}     Search and play
 
 ${C_WHITE}Options:${C_RESET}
-    ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}       Search movies/series
-    ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}       Search anime via anidb.app
-    ${C_DIM}--dub${C_RESET}             Use dubbed audio for anime
-    ${C_DIM}--sub${C_RESET}             Use subbed audio for anime (default)
+    ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}       Search movies/series/anime
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}     Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}       Show recently added
     ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}       Browse a collection
@@ -183,7 +181,14 @@ resolve_stream_url() {
     [ -z "$_vcloud_val" ] && printf "%s" "$_workers_url" && return
 
     _base="$(printf "%s" "$_workers_url" | sed 's/?.*//' | sed 's|/$||')"
-    _tokens_json="$($curl_exe -sf "${_base}/api/links?vcloud=${_vcloud_val}")"
+    _tokens_json=""
+    _attempt=1
+    while [ "$_attempt" -le 5 ]; do
+        _tokens_json="$($curl_exe -sf "${_base}/api/links?vcloud=${_vcloud_val}")"
+        printf "%s" "$_tokens_json" | grep -q '"tokens":{}' || [ -z "$_tokens_json" ] || break
+        _attempt=$(( _attempt + 1 ))
+        sleep 0.5
+    done
     [ -z "$_tokens_json" ] && printf "%s" "$_workers_url" && return
 
     _type="$(printf "%s" "$_tokens_json" | grep -oP '"tokens":\{"\K[^"]+' | head -n 1)"
@@ -253,7 +258,7 @@ hdec() {
 # Present items from JSON file via fzf/nth, write selected JSON to tmpfile2
 select_item() {
     _count=$(jq 'length' "$tmpfile")
-    [ "$_count" -eq 0 ] && warn "No results found." && return 1
+    [ "$_count" -eq 0 ] && return 1
 
     if [ "$_count" -eq 1 ]; then
         jq '.[0]' "$tmpfile" > "$tmpfile2"
@@ -647,12 +652,10 @@ cmd_search() {
     _encoded=$(printf '%s' "$_query" | sed 's/ /%20/g')
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
-        warn "VICINE unreachable — trying anidb.app..."
         cmd_anime "$_query"
         return
     fi
     if ! select_item; then
-        warn "No VICINE match for \"$_query\" — trying anidb.app..."
         cmd_anime "$_query"
         return
     fi
@@ -769,9 +772,8 @@ cmd_anime() {
     _query="$1"
     [ -z "$_query" ] && die "Missing anime search query"
 
-    info "Searching anidb.app: $_query"
     anime_list="$(anidb_search "$_query")"
-    [ -z "$anime_list" ] && die "No results found (anidb.app unreachable or no match)."
+    [ -z "$anime_list" ] && die "No results found."
 
     # select anime (index-prefixed non-interactive or menu)
     if [ -n "$select_nth" ]; then
@@ -969,9 +971,6 @@ query=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -s|--search)      search_mode="search" ;;
-        -A|--anime)       provider="anime"; search_mode="anime" ;;
-        --dub)            anime_mode="dub" ;;
-        --sub)            anime_mode="sub" ;;
         -t|--trending)    search_mode="trending" ;;
         -r|--recent)      search_mode="recent" ;;
         -b|--browse)      search_mode="browse"; shift; _browse_col="$1"; [ -z "$_browse_col" ] && die "Missing collection name for -b" ;;
