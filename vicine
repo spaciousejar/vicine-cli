@@ -191,7 +191,7 @@ resolve_stream_url() {
     done
     [ -z "$_tokens_json" ] && printf "%s" "$_workers_url" && return
 
-    _type="$(printf "%s" "$_tokens_json" | grep -oP '"tokens":\{"\K[^"]+' | head -n 1)"
+    _type="$(printf "%s" "$_tokens_json" | sed -n 's/.*"tokens":{"\([^"]*\)".*/\1/p')"
     _ts="$(printf "%s" "$_tokens_json" | sed -n "s/.*\"${_type}\":{\"ts\":\"\([^\"]*\)\".*/\1/p")"
     _sig="$(printf "%s" "$_tokens_json" | sed -n "s/.*\"${_type}\":{[^}]*\"sig\":\"\([^\"]*\)\".*/\1/p")"
 
