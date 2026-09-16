@@ -1,5 +1,5 @@
 #!/bin/sh
-# vicine - Watch and download anything
+# vicine - Watch and download anything from terminal
 
 version_number="1.0.0"
 
@@ -119,15 +119,11 @@ ${C_WHITE}Options:${C_RESET}
 
 ${C_WHITE}Examples:${C_RESET}
     ${C_GRAY}${0##*/} batman${C_RESET}
-    ${C_GRAY}${0##*/} -s "death of robin hood"${C_RESET}
     ${C_GRAY}${0##*/} -t movies${C_RESET}
     ${C_GRAY}${0##*/} -d euphoria${C_RESET}
     ${C_GRAY}${0##*/} -b bollywood_movies${C_RESET}
-    ${C_GRAY}${0##*/} -S${C_RESET}
     ${C_GRAY}${0##*/} -q 720p -e 3 stranger things${C_RESET}
-    ${C_GRAY}${0##*/} -q 1080p -e 5-8 stranger things${C_RESET}
     ${C_GRAY}${0##*/} -c${C_RESET}
-    ${C_GRAY}${0##*/} -i batman${C_RESET}
 
 EOF
     exit 0
@@ -1023,13 +1019,13 @@ esac
 case "$search_mode" in
     search)
         while [ -z "$query" ]; do
-            printf "\33[2K\r${C_CYAN}${C_BOLD}  ▸ ${C_RESET}" && read -r query
+            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}" && read -r query
         done
         cmd_search "$query"
         ;;
     anime)
         while [ -z "$query" ]; do
-            printf "\33[2K\r${C_CYAN}${C_BOLD}  ▸ ${C_RESET}" && read -r query
+            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}" && read -r query
         done
         cmd_anime "$query"
         ;;
