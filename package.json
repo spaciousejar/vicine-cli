@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Watch and download movies, series, and anime from the terminal",
   "bin": {
-    "vicine": "./vicine"
+    "vicine": "vicine"
   },
   "files": [
     "vicine",
@@ -11,7 +11,10 @@
     "README.md",
     "LICENSE"
   ],
-  "repository": "https://github.com/spaciousejar/vicine-cli.git",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spaciousejar/vicine-cli.git"
+  },
   "license": "GPL-3.0",
   "systemDeps": [
     "curl",
