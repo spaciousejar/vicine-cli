@@ -6,6 +6,8 @@
 
 A POSIX shell script to search, stream, and download movies, series and anime from the terminal.
 
+See the [CHANGELOG](CHANGELOG.md) for release history.
+
 ## Features
 
 - **Search** movies, series and anime by title
