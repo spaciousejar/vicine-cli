@@ -82,8 +82,8 @@ Releases are fully automated — one tag push is enough:
 
 ```sh
 # bump the version in `vicine` (version_number) and `package.json`, commit, then:
-git tag -a v1.2.4 -m "v1.2.4"
-git push origin v1.2.4
+git tag -a v1.3.0 -m "v1.3.0"
+git push origin v1.3.0
 ```
 
 `.github/workflows/publish.yml` then:
