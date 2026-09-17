@@ -68,42 +68,42 @@ menu() {
 help_info() {
     cat <<EOF
 
-${C_CYAN}${C_BOLD}  vicine${C_RESET} ${C_DIM}v${version_number}${C_RESET}  ${C_GRAY}Watch and download movies, series amd anime for free${C_RESET}
+${C_CYAN}${C_BOLD}  vicine${C_RESET} ${C_DIM}v${version_number}${C_RESET}  ${C_GRAY}Watch and download movies, series and anime for free${C_RESET}
 
 ${C_WHITE}Usage:${C_RESET}
     ${0##*/} [options] [query]
     ${0##*/} [query] [options]
 
 ${C_WHITE}Commands:${C_RESET}
-    ${C_DIM}(default)${C_RESET}     Search and play
+    ${C_DIM}(default)${C_RESET}               Search and play
 
 ${C_WHITE}Options:${C_RESET}
-    ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}       Search movies/series/anime
-    ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}        Search anime directly (anidb.app)
-    ${C_DIM}--dub / --sub${C_RESET}   Dub/sub audio for anime (default sub)
-    ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}     Show trending content
-    ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}       Show recently added
-    ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}       Browse a collection
-    ${C_CYAN}-S${C_RESET}, ${C_CYAN}--stats${C_RESET}        Show catalogue stats
-    ${C_CYAN}-q${C_RESET}, ${C_CYAN}--quality${C_RESET}      Select quality (best/480p/720p/1080p/4K)
-    ${C_CYAN}-e${C_RESET}, ${C_CYAN}--episode${C_RESET}      Play episode N, N-M, or -1 (latest)
-    ${C_CYAN}-n${C_RESET}, ${C_CYAN}--select-nth${C_RESET}    Select result by index N (non-interactive)
-    ${C_CYAN}-c${C_RESET}, ${C_CYAN}--continue${C_RESET}     Continue from history
-    ${C_CYAN}-C${C_RESET}, ${C_CYAN}--clear-history${C_RESET} Clear watch history
-    ${C_CYAN}-U${C_RESET}, ${C_CYAN}--update${C_RESET}       Update the script
-    ${C_CYAN}-i${C_RESET}, ${C_CYAN}--info${C_RESET}         Show info only (no play)
-    ${C_CYAN}-d${C_RESET}, ${C_CYAN}--download${C_RESET}     Download instead of playing
-    ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET} Download full series or anime
-    ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}       Specify player (mpv, iina, vlc)
-    ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}      Show version
-    ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}         Show this help
-    ${C_DIM}--rofi${C_RESET}           Use rofi instead of fzf
-    ${C_DIM}--dmenu${C_RESET}          Use dmenu instead of fzf
-    ${C_DIM}--no-detach${C_RESET}      Don't detach player
-    ${C_DIM}--exit-after-play${C_RESET} Play then exit, return player exit code
-    ${C_DIM}--download-dir${C_RESET}   Set download directory
-    ${C_DIM}--page N${C_RESET}         Browse page N (default 1)
-    ${C_DIM}--limit N${C_RESET}        Items per browse page (default 1000)
+    ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}            Search movies/series/anime
+    ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}             Search anime directly (anidb.app)
+    ${C_DIM}--dub / --sub${C_RESET}           Dub/sub audio for anime (default sub)
+    ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}          Show trending content
+    ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
+    ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}            Browse a collection
+    ${C_CYAN}-S${C_RESET}, ${C_CYAN}--stats${C_RESET}             Show catalogue stats
+    ${C_CYAN}-q${C_RESET}, ${C_CYAN}--quality${C_RESET}           Select quality (best/480p/720p/1080p/4K)
+    ${C_CYAN}-e${C_RESET}, ${C_CYAN}--episode${C_RESET}           Play episode N, N-M, or -1 (latest)
+    ${C_CYAN}-n${C_RESET}, ${C_CYAN}--select-nth${C_RESET}        Select result by index N (non-interactive)
+    ${C_CYAN}-c${C_RESET}, ${C_CYAN}--continue${C_RESET}          Continue from history
+    ${C_CYAN}-C${C_RESET}, ${C_CYAN}--clear-history${C_RESET}     Clear watch history
+    ${C_CYAN}-U${C_RESET}, ${C_CYAN}--update${C_RESET}            Update the script
+    ${C_CYAN}-i${C_RESET}, ${C_CYAN}--info${C_RESET}              Show info only (no play)
+    ${C_CYAN}-d${C_RESET}, ${C_CYAN}--download${C_RESET}          Download instead of playing
+    ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET}      Download full series or anime
+    ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}            Specify player (mpv, iina, vlc)
+    ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}, ${C_CYAN}-v${C_RESET}, ${C_CYAN}--v${C_RESET}  Show version
+    ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}              Show this help
+    ${C_DIM}--rofi${C_RESET}                  Use rofi instead of fzf
+    ${C_DIM}--dmenu${C_RESET}                 Use dmenu instead of fzf
+    ${C_DIM}--no-detach${C_RESET}             Don't detach player
+    ${C_DIM}--exit-after-play${C_RESET}       Play then exit, return player exit code
+    ${C_DIM}--download-dir${C_RESET}          Set download directory
+    ${C_DIM}--page N${C_RESET}                Browse page N (default 1)
+    ${C_DIM}--limit N${C_RESET}               Items per browse page (default 1000)
 
 ${C_WHITE}Examples:${C_RESET}
     ${C_GRAY}${0##*/} batman${C_RESET}
@@ -1068,7 +1068,7 @@ while [ $# -gt 0 ]; do
         -C|--clear-history) search_mode="clear_history" ;;
         --exit-after-play) exit_after_play=1; no_detach=1 ;;
         -U|--update)      update_script ;;
-        -V|--version)     version_info ;;
+        -V|-v|--version|--v) version_info ;;  # -v/--v are common version aliases
         -h|--help)        help_info ;;
         --rofi)           menu_program="rofi" ;;
         --dmenu)          menu_program="dmenu" ;;
