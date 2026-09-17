@@ -5,11 +5,16 @@ All notable changes to **vicine** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-18
+
+### Added
 
 - `vicine --uninstall` removes the script from disk; watch history is kept.
-- README documents installing via the AUR package (`yay -S vicine`).
 - `-v`/`--v` are accepted as version aliases alongside `-V`/`--version`.
+- README documents installing via the AUR package (`yay -S vicine`).
+
+### Changed
+
 - Align the help text columns and fix the "series and anime" tagline typo.
 - Switch npm publishing from GitHub Packages to npmjs.
 - Automate GitHub Releases on `v*` tag push — notes are generated from the commits since the previous tag (skipped if the release already exists).
