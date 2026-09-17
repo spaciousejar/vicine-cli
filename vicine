@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.1.1"
+version_number="1.1.2"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -50,23 +50,9 @@ ok() {
     printf "\33[2K\r${C_GREEN}  ✓ %s${C_RESET}\n" "$*"
 }
 
-# Spinner for long operations
-spinner() {
-    _msg="$1"
-    _sp='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    _i=0
-    while kill -0 "$$" 2>/dev/null; do
-        printf "\33[2K\r${C_CYAN}  ${_sp:$_i:1} %s${C_RESET}" "$_msg" >&2
-        _i=$(( (_i + 1) % ${#_sp} ))
-        sleep 0.1
-    done &
-    _spinner_pid=$!
-}
-
-stop_spinner() {
-    [ -n "$_spinner_pid" ] && kill "$_spinner_pid" 2>/dev/null
-    wait "$_spinner_pid" 2>/dev/null
-    printf "\33[2K\r" >&2
+# Portable horizontal rule (no bash brace expansion)
+hr() {
+    awk -v n="${1:-50}" 'BEGIN { for (i=0; i<n; i++) printf "─" }'
 }
 
 # $1 = prompt, $2 = extra flags
@@ -153,7 +139,6 @@ _exit_code=0
 cleanup() {
     [ -t 1 ] && tput sgr0 2>/dev/null
     rm -f "$tmpfile" "$tmpfile2" "$tmpfile3"
-    kill "$_spinner_pid" 2>/dev/null
     exit "$_exit_code"
 }
 
@@ -208,9 +193,14 @@ parse_links() {
     printf "%s\n" "$1" | while IFS= read -r line; do
         line="$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         [ -z "$line" ] && continue
+        # Drop the fixed mid-link placeholder fields (Link2..Link7) so they
+        # can't be mistaken for data and URLs keep their commas.
+        line="$(printf "%s" "$line" | sed 's/, *Link[0-9] *//g')"
         url="$(printf "%s" "$line" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        size="$(printf "%s" "$line" | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        desc="$(printf "%s" "$line" | rev | cut -d',' -f2 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        _rest="$(printf "%s" "$line" | cut -d',' -f2- | sed 's/^[[:space:]]*//')"
+        [ -z "$_rest" ] && continue
+        size="$(printf "%s" "$_rest" | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        desc="$(printf "%s" "$_rest" | rev | cut -d',' -f2- | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         printf "%s\t%s\t%s\n" "$url" "$desc" "$size"
     done
 }
@@ -229,17 +219,13 @@ parse_episodes() {
         _variants="$(printf "%s" "$line" | sed 's/Episode [0-9]* : //')"
         _best="$(printf "%s" "$_variants" | sed 's/.* : //' | tail -1)"
         if [ -n "$_want" ]; then
-            _match=$(printf "%s" "$_variants" | sed 's/ : /\n/g' | grep -i ",$_want$" | tail -1)
+            _match=$(printf "%s" "$_variants" | sed 's/ : /\n/g' | awk -F',' -v w="$_want" '{q=$NF; gsub(/^[ \t]+|[ \t]+$/, "", q); if (tolower(q)==tolower(w)) print}' | tail -1)
             [ -n "$_match" ] && _best="$_match"
         fi
         _url="$(printf "%s" "$_best" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        if [ "$(printf "%s" "$_best" | awk -F',' '{print NF}')" -ge 3 ]; then
-            _size="$(printf "%s" "$_best" | cut -d',' -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            _qual="$(printf "%s" "$_best" | cut -d',' -f3 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        else
-            _size=""
-            _qual="$(printf "%s" "$_best" | cut -d',' -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        fi
+        _rest="$(printf "%s" "$_best" | cut -d',' -f2-)"
+        _qual="$(printf "%s" "$_rest" | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        _size="$(printf "%s" "$_rest" | rev | cut -d',' -f2- | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         printf "%s\t%s\t%s\t%s\n" "$_ep_num" "$_url" "$_qual" "$_size"
     done
 }
@@ -247,6 +233,11 @@ parse_episodes() {
 # Decode common HTML entities in titles/headers
 hdec() {
     sed "s/&#039;/'/g; s/&amp;/\&/g; s/&quot;/\"/g"
+}
+
+# Percent-encode a string for use in a URL (spaces, &, #, /, etc.)
+henc() {
+    printf '%s' "$1" | jq -sRr '@uri'
 }
 
 # ─── Selection helpers ──────────────────────────────────────────────────────
@@ -276,7 +267,7 @@ select_item() {
     [ -z "$_selection" ] && return 1
 
     # Extract first index from selection
-    _idx=$(printf "%s" "$_selection" | head -c 2 | tr -d ' ')
+    _idx=$(printf "%s" "$_selection" | awk '{print $1+0}')
     [ -z "$_idx" ] && return 1
 
     jq ".[${_idx}]" "$tmpfile" > "$tmpfile2"
@@ -294,7 +285,7 @@ show_info() {
 
     printf "\n"
     printf "  ${C_CYAN}${C_BOLD}%-50s${C_RESET} ${C_DIM}%s${C_RESET}\n" "$_title" "$_type"
-    printf "  ${C_DIM}$(printf '─%.0s' {1..50})${C_RESET}\n"
+    printf "  ${C_DIM}$(hr 50)${C_RESET}\n"
     printf "\n"
 
     # Download links
@@ -373,10 +364,10 @@ cmd_history() {
     [ -f "$histfile" ] && [ -s "$histfile" ] || { warn "No watch history yet."; return 0; }
     _count=$(wc -l < "$histfile")
     printf "" > "$tmpfile3"
-    awk -F'\t' '{ printf "%s  %s", NR-1, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5 }' "$histfile" >> "$tmpfile3"
+    awk -F'\t' '{ printf "%s  %s", NR-1, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5 }' "$histfile" >> "$tmpfile3"
     _pick=$(cat "$tmpfile3" | menu "Continue (${_count}): ")
     [ -z "$_pick" ] && return 0
-    _idx=$(printf "%s" "$_pick" | head -c 2 | tr -d ' ')
+    _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
     [ -z "$_idx" ] && return 0
     _entry=$(sed -n "$((_idx + 1))p" "$histfile")
     resume_season=$(printf "%s" "$_entry" | cut -f4)
@@ -385,6 +376,11 @@ cmd_history() {
     _slug=$(printf "%s" "$_entry" | cut -f1)
     if [ "$_type" = "series" ]; then
         api_fetch "/api/series/${_slug}" "$tmpfile2"
+    elif [ "$_type" = "anime" ]; then
+        anime_resume "$_slug" "$(printf "%s" "$_entry" | cut -f2)" "$resume_ep"
+        resume_season=""
+        resume_ep=""
+        return
     else
         api_fetch "/api/movies/${_slug}" "$tmpfile2"
     fi
@@ -629,7 +625,7 @@ prompt_action() {
     _parsed="$(parse_links "$_links")"
     _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
     if [ "$quality" != "best" ]; then
-        _q_match=$(printf "%s" "$_parsed" | grep -i "$quality" | tail -1 | cut -f1)
+        _q_match=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
         [ -n "$_q_match" ] && _best_url="$_q_match"
     fi
 
@@ -653,7 +649,7 @@ prompt_action() {
                 _parsed="$(parse_links "$_links")"
                 _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
                 if [ "$quality" != "best" ]; then
-                    _q_match=$(printf "%s" "$_parsed" | grep -i "$quality" | tail -1 | cut -f1)
+                    _q_match=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
                     [ -n "$_q_match" ] && _best_url="$_q_match"
                 fi
                 _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
@@ -670,7 +666,7 @@ prompt_action() {
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
-    _encoded=$(printf '%s' "$_query" | sed 's/ /%20/g')
+    _encoded=$(henc "$_query")
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
         cmd_anime "$_query"
@@ -712,7 +708,7 @@ cmd_browse() {
     _collection="$1"
     [ -z "$_collection" ] && die "Missing collection name"
     info "Loading $_collection..."
-    api_fetch "/api/${_collection}?page=${browse_page}&limit=${browse_limit}" "$tmpfile"
+    api_fetch "/api/$(henc "$_collection")?page=$(henc "$browse_page")&limit=$(henc "$browse_limit")" "$tmpfile"
     # Unwrap { data: [...] } if present, inject known contentType
     if jq -e '.data' "$tmpfile" >/dev/null 2>&1; then
         jq --arg ct "$browse_type" '.data | map(.contentType = $ct)' "$tmpfile" > "${tmpfile}.tmp"
@@ -726,7 +722,7 @@ cmd_browse() {
 cmd_stats() {
     api_fetch "/rpc/stats" "$tmpfile"
     printf "\n  ${C_CYAN}${C_BOLD}VICINE catalogue${C_RESET}\n"
-    printf "  ${C_DIM}$(printf '─%.0s' {1..30})${C_RESET}\n"
+    printf "  ${C_DIM}$(hr 30)${C_RESET}\n"
     jq -r 'to_entries[] | "  \(.key): \(.value)"' "$tmpfile"
     printf "\n"
 }
@@ -739,7 +735,8 @@ anidb_curl() {
 
 # search → lines "anime_id<TAB>title" 
 anidb_search() {
-    _page="$(anidb_curl "$(printf "$anime_search_api" "$1")" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
+    _q=$(henc "$1")
+    _page="$(anidb_curl "$(printf "$anime_search_api" "$_q")" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
     [ -z "$_page" ] && return 1
     printf "%s" "$_page" | sed -nE 's|.*anime/([a-z0-9-]+-[0-9]+)".*alt="([^"]+)".*|\1\t\2|p' | sed -e "s|&#039;|'|g" -e 's|&quot;|"|g'
 }
@@ -770,7 +767,7 @@ anime_pick_quality() {
     case "$quality" in
         best)  _result=$(printf "%s" "$_links" | head -n 1) ;;
         worst) _result=$(printf "%s" "$_links" | grep -E '^[0-9]{3,4}' | tail -n 1) ;;
-        *)     _result=$(printf "%s" "$_links" | grep -m 1 "$quality") ;;
+        *)     _result=$(printf "%s" "$_links" | grep -m 1 -F "$quality") ;;
     esac
     [ -z "$_result" ] && printf "%s" "$_links" | head -n 1 || printf "%s" "$_result"
 }
@@ -785,7 +782,80 @@ anime_play_episode() {
     [ -z "$_video_link" ] && { warn "No valid stream for ep $_ep_no."; return 1; }
     info "Playing ep ${_ep_no}: ${anime_title}"
     play_url "$_video_link" "$anime_title - Episode $_ep_no"
-    update_history "$anime_id" "$anime_title" series 0 "$_ep_no"
+    update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
+}
+
+# play loop (ani-cli style control menu) for anime.
+# Globals used: anime_ep_list, anime_title, _cur_ep, _range_end
+anime_play_loop() {
+    while true; do
+        if ! printf "%s\n" "$anime_ep_list" | grep -qx "$_cur_ep"; then
+            warn "Episode $_cur_ep not available."
+            break
+        fi
+        anime_play_episode "$_cur_ep"
+
+        # auto-advance in range mode
+        if [ -n "$_range_end" ]; then
+            _last="$(printf "%s\n" "$anime_ep_list" | tail -1)"
+            if [ "$_cur_ep" = "$_range_end" ] || [ "$_cur_ep" = "$_last" ]; then
+                unset _range_end
+            else
+                _cur_ep="$(printf "%s\n" "$anime_ep_list" | awk -v n="$_cur_ep" '$1==n{getline; print; exit}')"
+                continue
+            fi
+        fi
+
+        # control menu
+        _line="$(printf "%s\n" "$anime_ep_list" | grep -n "^$_cur_ep$" | cut -d: -f1)"
+        _is_first=0; [ "$_line" = "1" ] && _is_first=1
+        _is_last=0; [ "$_cur_ep" = "$(printf "%s\n" "$anime_ep_list" | tail -1)" ] && _is_last=1
+        printf "" > "$tmpfile3"
+        printf "replay\n" >> "$tmpfile3"
+        [ "$_is_first" = 0 ] && printf "previous\n" >> "$tmpfile3"
+        [ "$_is_last" = 0 ] && printf "next\n" >> "$tmpfile3"
+        printf "select\nchange_quality\nquit\n" >> "$tmpfile3"
+        _ctrl=$(cat "$tmpfile3" | menu "Playing ep ${_cur_ep}: ${anime_title}... " || true)
+        [ -z "$_ctrl" ] && break
+        case "$_ctrl" in
+            next)
+                _next="$(printf "%s\n" "$anime_ep_list" | awk -v n="$_cur_ep" '$1==n{getline; print; exit}')"
+                [ -n "$_next" ] && [ "$_next" != "$_cur_ep" ] && _cur_ep="$_next"
+                ;;
+            previous)
+                _cur_ep="$(printf "%s\n" "$anime_ep_list" | awk -v n="$_cur_ep" '{if($1==n)print prev; prev=$1}')"
+                ;;
+            replay)   ;;
+            select)
+                _pick="$(printf "%s\n" "$anime_ep_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select episode: " || true)"
+                [ -n "$_pick" ] && _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
+                ;;
+            change_quality)
+                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n4K\n' | menu "Quality: " || true)
+                [ -n "$_new_q" ] && quality="$_new_q"
+                ;;
+            quit|*)   break ;;
+        esac
+    done
+}
+
+# Resume an anime from history: fetch episode map for stored id, then play loop
+anime_resume() {
+    anime_id="$1"
+    anime_title="$2"
+    _ep_db="$3"
+    info "Fetching episodes for $anime_title"
+    anime_ep_maps="$(anidb_episodes "$anime_id")"
+    [ -z "$anime_ep_maps" ] && die "No episodes found for $anime_title."
+    anime_ep_list="$(printf "%s" "$anime_ep_maps" | cut -f 2)"
+    [ -z "$anime_ep_list" ] && die "No episodes found for $anime_title."
+    _cur_ep="$_ep_db"
+    if ! printf "%s\n" "$anime_ep_list" | grep -qx "$_cur_ep"; then
+        warn "Episode $_cur_ep not available; starting from latest."
+        _cur_ep="$(printf "%s\n" "$anime_ep_list" | tail -1)"
+    fi
+    _range_end=""
+    anime_play_loop
 }
 
 # main anime flow: search → select → episode select → play loop
@@ -798,11 +868,13 @@ cmd_anime() {
 
     # select anime (index-prefixed non-interactive or menu)
     if [ -n "$select_nth" ]; then
+        _ncount=$(printf "%s\n" "$anime_list" | wc -l | tr -d ' ')
+        [ "$select_nth" -ge "$_ncount" ] 2>/dev/null && die "Selection ${select_nth} out of range (0-$((_ncount - 1)))"
         _result="$(printf "%s\n" "$anime_list" | sed -n "$((select_nth + 1))p")"
     else
         _result="$(printf "%s\n" "$anime_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select anime: " || true)"
         [ -z "$_result" ] && return 0
-        _result="$(printf "%s\n" "$anime_list" | sed -n "$(printf "%s" "$_result" | head -c 2 | tr -d ' ')p")"
+        _result="$(printf "%s\n" "$anime_list" | sed -n "$(printf "%s" "$_result" | awk '{print $1+0}')p")"
     fi
     [ -z "$_result" ] && die "Invalid anime selection"
     anime_id="$(printf "%s" "$_result" | cut -f 1)"
@@ -844,55 +916,7 @@ cmd_anime() {
     esac
 
     # play loop (ani-cli style control menu)
-    while true; do
-        if ! printf "%s\n" "$anime_ep_list" | grep -qx "$_cur_ep"; then
-            warn "Episode $_cur_ep not available."
-            break
-        fi
-        anime_play_episode "$_cur_ep"
-
-        # auto-advance in range mode
-        if [ -n "$_range_end" ]; then
-            _last="$(printf "%s\n" "$anime_ep_list" | tail -1)"
-            if [ "$_cur_ep" = "$_range_end" ] || [ "$_cur_ep" = "$_last" ]; then
-                unset _range_end
-            else
-                _cur_ep="$(printf "%s\n" "$anime_ep_list" | awk -v n="$_cur_ep" '$1==n{getline; print; exit}')"
-                continue
-            fi
-        fi
-
-        # control menu
-        _line="$(printf "%s\n" "$anime_ep_list" | grep -n "^$_cur_ep$" | cut -d: -f1)"
-        _is_first=0; [ "$_line" = "1" ] && _is_first=1
-        _is_last=0; [ "$_cur_ep" = "$(printf "%s\n" "$anime_ep_list" | tail -1)" ] && _is_last=1
-        printf "" > "$tmpfile3"
-        printf "replay\n" >> "$tmpfile3"
-        [ "$_is_first" = 0 ] && printf "previous\n" >> "$tmpfile3"
-        [ "$_is_last" = 0 ] && printf "next\n" >> "$tmpfile3"
-        printf "select\nchange_quality\nquit\n" >> "$tmpfile3"
-        _ctrl=$(cat "$tmpfile3" | menu "Playing ep ${_cur_ep}: ${anime_title}... " || true)
-        [ -z "$_ctrl" ] && break
-        case "$_ctrl" in
-            next)
-                _next="$(printf "%s\n" "$anime_ep_list" | awk -v n="$_cur_ep" '$1==n{getline; print; exit}')"
-                [ -n "$_next" ] && [ "$_next" != "$_cur_ep" ] && _cur_ep="$_next"
-                ;;
-            previous)
-                _cur_ep="$(printf "%s\n" "$anime_ep_list" | awk -v n="$_cur_ep" '{if($1==n)print prev; prev=$1}')"
-                ;;
-            replay)   ;;
-            select)
-                _pick="$(printf "%s\n" "$anime_ep_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select episode: " || true)"
-                [ -n "$_pick" ] && _cur_ep="$(printf "%s" "$_pick" | grep -oE '[0-9]+' | head -1)"
-                ;;
-            change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n4K\n' | menu "Quality: " || true)
-                [ -n "$_new_q" ] && quality="$_new_q"
-                ;;
-            quit|*)   break ;;
-        esac
-    done
+    anime_play_loop
 }
 
 # ─── Self-update ────────────────────────────────────────────────────────────
@@ -998,7 +1022,7 @@ while [ $# -gt 0 ]; do
         -S|--stats)       search_mode="stats" ;;
         -i|--info)        search_mode="info"; info_only=1 ;;
         -d|--download)    player_function="download" ;;
-        -D|--download-all) search_mode="download_all" ;;
+        -D|--download-all) search_mode="download_all"; info_only=1 ;;
         -p|--player)      shift; player_function="$1" ;;
         -q|--quality)     shift; quality="$1" ;;
         -e|--episode)     shift; requested_eps="$1" ;;
@@ -1077,7 +1101,7 @@ case "$search_mode" in
     download_all)
         [ -z "$query" ] && die "Missing query"
         cmd_search "$query"
-        [ ! -f "$tmpfile2" ] && return 0 2>/dev/null || exit 0
+        [ ! -f "$tmpfile2" ] && exit 0
         _links=$(jq -r '.links // empty' "$tmpfile2")
         [ -z "$_links" ] && die "No links found"
         _parsed="$(parse_links "$_links")"
