@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.2.0"
+version_number="1.2.1"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -165,7 +165,7 @@ resolve_stream_url() {
     _tokens_json=""
     _attempt=1
     while [ "$_attempt" -le 5 ]; do
-        _tokens_json="$($curl_exe -sf "${_base}/api/links?vcloud=${_vcloud_val}")"
+        _tokens_json="$($curl_exe -sf --max-time 10 "${_base}/api/links?vcloud=${_vcloud_val}")"
         printf "%s" "$_tokens_json" | grep -q '"tokens":{}' || [ -z "$_tokens_json" ] || break
         _attempt=$(( _attempt + 1 ))
         sleep 0.5
@@ -179,7 +179,7 @@ resolve_stream_url() {
     [ -z "$_type" ] && printf "%s" "$_workers_url" && return
 
     _go_url="${_base}/go?type=${_type}&vcloud=${_vcloud_val}&ts=${_ts}&sig=${_sig}"
-    _real_url="$($curl_exe -sIL "$_go_url" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's/^[Ll]ocation: *//;s/\r//')"
+    _real_url="$($curl_exe -sIL --max-time 10 "$_go_url" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's/^[Ll]ocation: *//;s/\r//')"
     [ -n "$_real_url" ] && printf "%s" "$_real_url" || printf "%s" "$_workers_url"
 }
 
@@ -1176,7 +1176,8 @@ case "$search_mode" in
         printf '%s\n' "$_parsed" | while IFS='	' read -r _url _desc _size; do
             _qual=$(printf "%s" "$_desc" | grep -oE '[0-9]+p' | head -1)
             [ -z "$_qual" ] && _qual="alt"
-            do_download "$_url" "${_safe}_${_qual}"
+            _resolved=$(resolve_stream_url "$_url")
+            [ -n "$_resolved" ] && do_download "$_resolved" "${_safe}_${_qual}"
         done
         ;;
 esac
