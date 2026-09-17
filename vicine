@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.2.3"
+version_number="1.2.4"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -79,6 +79,8 @@ ${C_WHITE}Commands:${C_RESET}
 
 ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}       Search movies/series/anime
+    ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}        Search anime directly (anidb.app)
+    ${C_DIM}--dub / --sub${C_RESET}   Dub/sub audio for anime (default sub)
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}     Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}       Show recently added
     ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}       Browse a collection
@@ -109,6 +111,7 @@ ${C_WHITE}Examples:${C_RESET}
     ${C_GRAY}${0##*/} -d euphoria${C_RESET}
     ${C_GRAY}${0##*/} -b bollywood_movies${C_RESET}
     ${C_GRAY}${0##*/} -q 720p -e 3 stranger things${C_RESET}
+    ${C_GRAY}${0##*/} -A --dub -e 3 "jujutsu kaisen"${C_RESET}
     ${C_GRAY}${0##*/} -c${C_RESET}
 
 EOF
@@ -232,7 +235,7 @@ parse_episodes() {
 
 # Decode common HTML entities in titles/headers
 hdec() {
-    sed "s/&#039;/'/g; s/&amp;/\&/g; s/&quot;/\"/g"
+    sed "s/&#0*39;/'/g; s/&#x27;/'/g; s/&amp;/\&/g; s/&quot;/\"/g"
 }
 
 # Percent-encode a string for use in a URL (spaces, &, #, /, etc.)
@@ -364,7 +367,7 @@ cmd_history() {
     [ -f "$histfile" ] && [ -s "$histfile" ] || { warn "No watch history yet."; return 0; }
     _count=$(wc -l < "$histfile")
     printf "" > "$tmpfile3"
-    awk -F'\t' '{ printf "%s  %s", NR-1, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5 }' "$histfile" >> "$tmpfile3"
+    awk -F'\t' '{ printf "%s  %s", NR-1, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" >> "$tmpfile3"
     _pick=$(cat "$tmpfile3" | menu "Continue (${_count}): ")
     [ -z "$_pick" ] && return 0
     _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
@@ -507,7 +510,7 @@ episode_loop() {
                 [ -n "$_pick" ] && _cur_ep=$(printf "%s" "$_pick" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
                 ;;
             change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n4K\n' | menu "Quality: ")
+                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
@@ -522,6 +525,7 @@ episode_loop() {
                 done
                 _spick=$(cat "$tmpfile3" | menu "Switch season: ")
                 _sn=$(printf "%s" "$_spick" | grep -o '[0-9]*')
+                [ -z "$_sn" ] && continue
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
                 _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
@@ -645,7 +649,7 @@ prompt_action() {
         case "$_ctrl" in
             replay)             _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
             change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n4K\n' | menu "Quality: ")
+                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _parsed="$(parse_links "$_links")"
                 _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
@@ -670,11 +674,19 @@ cmd_search() {
     _encoded=$(henc "$_query")
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
-        cmd_anime "$_query"
+        if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
+            cmd_anime "$_query"
+        else
+            die "Search failed: ${API} unreachable"
+        fi
         return
     fi
     if ! select_item; then
-        cmd_anime "$_query"
+        if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
+            cmd_anime "$_query"
+        else
+            warn "No results found for: $_query"
+        fi
         return
     fi
     [ "$info_only" -eq 1 ] && show_info
@@ -739,7 +751,7 @@ anidb_search() {
     _q=$(henc "$1")
     _page="$(anidb_curl "$(printf "$anime_search_api" "$_q")" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
     [ -z "$_page" ] && return 1
-    printf "%s" "$_page" | sed -nE 's|.*anime/([a-z0-9-]+-[0-9]+)".*alt="([^"]+)".*|\1\t\2|p' | sed -e "s|&#039;|'|g" -e 's|&quot;|"|g'
+    printf "%s" "$_page" | sed -nE 's|.*anime/([a-z0-9-]+-[0-9]+)".*alt="([^"]+)".*|\1\t\2|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g'
 }
 
 # episodes for anime → lines "ep_id<TAB>ep_no"
@@ -838,7 +850,7 @@ anime_play_loop() {
                 [ -n "$_pick" ] && _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
                 ;;
             change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n4K\n' | menu "Quality: " || true)
+                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality: " || true)
                 [ -n "$_new_q" ] && quality="$_new_q"
                 ;;
             quit|*)   break ;;
@@ -1028,6 +1040,8 @@ esac
 if [ ! -t 0 ]; then
     command -v dmenu >/dev/null && menu_program=dmenu
     command -v rofi >/dev/null && menu_program=rofi
+    # Non-interactive: use first result automatically
+    [ -z "$select_nth" ] && select_nth=0
 fi
 
 # Parse args
@@ -1036,13 +1050,16 @@ query=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -s|--search)      search_mode="search" ;;
+        -A|--anime)       search_mode="anime" ;;
+        --dub)            anime_mode="dub" ;;
+        --sub)            anime_mode="sub" ;;
         -t|--trending)    search_mode="trending" ;;
         -r|--recent)      search_mode="recent" ;;
         -b|--browse)      search_mode="browse"; shift; _browse_col="$1"; [ -z "$_browse_col" ] && die "Missing collection name for -b" ;;
         -S|--stats)       search_mode="stats" ;;
         -i|--info)        search_mode="info"; info_only=1 ;;
         -d|--download)    player_function="download" ;;
-        -D|--download-all) search_mode="download_all"; info_only=1; download_all_mode=1 ;;
+        -D|--download-all) info_only=1; download_all_mode=1; [ -z "$search_mode" ] && search_mode="download_all" ;;
         -p|--player)      shift; player_function="$1" ;;
         -q|--quality)     shift; quality="$1" ;;
         -e|--episode)     shift; requested_eps="$1" ;;
@@ -1061,7 +1078,7 @@ while [ $# -gt 0 ]; do
         --limit)          shift; browse_limit="$1" ;;
         help)             help_info ;;
         version)          version_info ;;
-        trending|recent|browse|search|info)
+        trending|recent|browse|search|info|anime)
             [ -z "$search_mode" ] && search_mode="$1" || query="$(printf '%s' "$query $1" | sed 's|^ ||')"
             ;;
         *)                query="$(printf '%s' "$query $1" | sed 's|^ ||')" ;;
@@ -1083,6 +1100,9 @@ esac
 
 # Default to search
 [ -z "$search_mode" ] && search_mode="search"
+
+# 4K is 2160p — normalize so -q 4K matches "2160p" variants everywhere
+[ "$quality" = "4K" ] && quality="2160p"
 
 # Run command
 case "$search_mode" in
