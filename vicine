@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.0.0"
+version_number="1.1.0"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -485,7 +485,7 @@ episode_loop() {
             fi
         fi
 
-        # Build ani-cli-style control menu
+        #control menu
         _sc=$(season_count)
         printf "" > "$tmpfile3"
         printf "replay\n" >> "$tmpfile3"
@@ -505,7 +505,7 @@ episode_loop() {
             select)
                 printf "" > "$tmpfile3"
                 printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
-                    printf "%-12s  %s  %s\n" "Ep $_num" "$_qual" "$_size" >> "$tmpfile3"
+                     printf "%-12s  %s  %s\n" "Ep $_num" "$_qual" "$_size" >> "$tmpfile3"
                 done
                 _pick=$(cat "$tmpfile3" | menu "Select episode: ")
                 [ -n "$_pick" ] && _cur_ep=$(printf "%s" "$_pick" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
@@ -636,7 +636,32 @@ prompt_action() {
     _resolved=$(resolve_stream_url "$_best_url")
     [ -z "$_resolved" ] && warn "Failed to resolve URL." && return 1
     info "Playing: $_title"
-    play_url "$_resolved" "$_title"
+
+    # Movie control menu loop
+    while true; do
+        printf "" > "$tmpfile3"
+        printf "replay\n" >> "$tmpfile3"
+        printf "change_quality\nquit\n" >> "$tmpfile3"
+        _ctrl=$(cat "$tmpfile3" | menu "Movie: $_title... ")
+        [ -z "$_ctrl" ] && break
+
+        case "$_ctrl" in
+            replay)             _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
+            change_quality)
+                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n4K\n' | menu "Quality: ")
+                [ -n "$_new_q" ] && quality="$_new_q"
+                _parsed="$(parse_links "$_links")"
+                _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
+                if [ "$quality" != "best" ]; then
+                    _q_match=$(printf "%s" "$_parsed" | grep -i "$quality" | tail -1 | cut -f1)
+                    [ -n "$_q_match" ] && _best_url="$_q_match"
+                fi
+                _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
+            quit)               break ;;
+            *)                  break ;;
+        esac
+    done
+
     update_history "$_slug" "$_title" movie 0 0
 }
 

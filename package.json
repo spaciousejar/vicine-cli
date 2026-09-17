@@ -1,6 +1,6 @@
 {
   "name": "vicine",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A POSIX shell script to search, stream, and download movies, series and anime from the terminal",
   "bin": {
     "vicine": "vicine"
