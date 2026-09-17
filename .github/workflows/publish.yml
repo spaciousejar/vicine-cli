@@ -1,4 +1,4 @@
-name: Publish to GitHub Packages
+name: Publish to npm
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   publish:
@@ -21,25 +20,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://npm.pkg.github.com
-          scope: "@spaciousejar"
-          always-auth: true
+          registry-url: https://registry.npmjs.org
 
-      - name: Verify package.json scope
+      - name: Verify package name
         run: |
           name="$(node -p "require('./package.json').name")"
-          test "$name" = "@spaciousejar/vicine" || {
-            echo "::error::package.json name must be @spaciousejar/vicine (GitHub Packages requires a scoped name); got: $name"
+          test "$name" = "vicine" || {
+            echo "::error::package.json name must be 'vicine' for the npmjs publish; got: $name"
             exit 1
           }
 
-      - name: Publish to GitHub Packages
+      - name: Publish to npmjs
         run: npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Print published package location
         run: |
           ver="$(node -p "require('./package.json').version")"
-          echo "Published @spaciousejar/vicine@${ver}"
-          echo "https://github.com/spaciousejar/vicine-cli/pkgs/npm/vicine"
+          echo "Published vicine@${ver}"
+          echo "https://www.npmjs.com/package/vicine"

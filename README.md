@@ -1,7 +1,8 @@
 # vicine
 
-[![Release](https://img.shields.io/github/v/release/spaciousejar/vicine-cli?logo=github)](https://github.com/spaciousejar/vicine-cli/releases)
-[![License](https://img.shields.io/github/license/spaciousejar/vicine-cli)](https://github.com/spaciousejar/vicine-cli/blob/master/LICENSE)
+[![npm version](https://img.shields.io/npm/v/vicine?logo=npm)](https://www.npmjs.com/package/vicine)
+[![npm downloads](https://img.shields.io/npm/dt/vicine)](https://www.npmjs.com/package/vicine)
+[![License](https://img.shields.io/npm/l/vicine)](https://github.com/spaciousejar/vicine-cli/blob/master/LICENSE)
 
 A POSIX shell script to search, stream, and download movies, series and anime from the terminal.
 
@@ -16,19 +17,13 @@ A POSIX shell script to search, stream, and download movies, series and anime fr
 
 ## Installation
 
-### npm (GitHub Packages)
+### npm
 
-The package is published to the GitHub Packages npm registry on every new `v*` tag.
+Published automatically to npmjs on every new `v*` tag.
 
 ```sh
-# Configure npm to use GitHub Packages for @spaciousejar scope
-npm config set @spaciousejar:registry https://npm.pkg.github.com
-
-# Install globally
-npm install -g @spaciousejar/vicine
+npm install -g vicine
 ```
-
-> Note: use a personal access token (classic) with `read:packages` scope if the package is private. See [Working with the npm registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry).
 
 ### One-liner installer
 
@@ -58,7 +53,7 @@ sudo cp vicine /usr/local/bin/vicine
 
 ### Updating
 
-- Installed via npm: `npm update -g @spaciousejar/vicine`
+- Installed via npm: `npm update -g vicine`
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
 
 ## Dependencies

@@ -1,5 +1,5 @@
 {
-  "name": "@spaciousejar/vicine",
+  "name": "vicine",
   "version": "1.2.3",
   "description": "A POSIX shell script to search, stream, and download movies, series and anime from the terminal",
   "bin": {
@@ -14,9 +14,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/spaciousejar/vicine-cli.git"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   },
   "license": "GPL-3.0",
   "systemDeps": [
