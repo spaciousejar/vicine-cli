@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.1.2"
+version_number="1.2.0"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-U${C_RESET}, ${C_CYAN}--update${C_RESET}       Update the script
     ${C_CYAN}-i${C_RESET}, ${C_CYAN}--info${C_RESET}         Show info only (no play)
     ${C_CYAN}-d${C_RESET}, ${C_CYAN}--download${C_RESET}     Download instead of playing
-    ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET} Download all qualities
+    ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET} Download all qualities / full series / anime
     ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}       Specify player (mpv, iina, vlc)
     ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}      Show version
     ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}         Show this help
@@ -427,20 +427,20 @@ do_download() {
     _url="$1"
     _name="$2"
     [ -z "$_url" ] && die "No URL to download"
-    _safe="$(printf "%s" "$_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
-    _filepath="${download_dir}/${_safe}.mp4"
+    _dl_safe="$(printf "%s" "$_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+    _dl_file="${download_dir}/${_dl_safe}.mp4"
 
-    [ -f "$_filepath" ] && warn "Already exists: $_filepath" && return 0
+    [ -f "$_dl_file" ] && warn "Already exists: $_dl_file" && return 0
 
-    info "Downloading: $_safe"
+    info "Downloading: $_dl_safe"
 
     if command -v yt-dlp >/dev/null 2>&1; then
-        yt-dlp --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_filepath" "$_url" && ok "Saved: $_filepath" && return 0
+        yt-dlp --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" && return 0
     fi
     if command -v ffmpeg >/dev/null 2>&1; then
-        ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_filepath" 2>/dev/null && ok "Saved: $_filepath" && return 0
+        ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
     fi
-    curl -L --progress-bar -o "$_filepath" "$_url" && ok "Saved: $_filepath"
+    curl -L --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file"
 }
 
 # ─── Episode controller ─────────────────────────────────────────────────────
@@ -780,9 +780,15 @@ anime_play_episode() {
     _chosen="$(anime_pick_quality "$_links")"
     _video_link="$(printf "%s" "$_chosen" | cut -d ">" -f 2)"
     [ -z "$_video_link" ] && { warn "No valid stream for ep $_ep_no."; return 1; }
-    info "Playing ep ${_ep_no}: ${anime_title}"
-    play_url "$_video_link" "$anime_title - Episode $_ep_no"
-    update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
+    if [ "$download_all_mode" = 1 ]; then
+        _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        _epnum=$(printf '%02d' "$_ep_no")
+        do_download "$_video_link" "${_safe}_Ep${_epnum}"
+    else
+        info "Playing ep ${_ep_no}: ${anime_title}"
+        play_url "$_video_link" "$anime_title - Episode $_ep_no"
+        update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
+    fi
 }
 
 # play loop (ani-cli style control menu) for anime.
@@ -885,6 +891,18 @@ cmd_anime() {
     [ -z "$anime_ep_maps" ] && die "No episodes found."
     anime_ep_list="$(printf "%s" "$anime_ep_maps" | cut -f 2)"
 
+    # Download-all mode: confirm once, then download every episode
+    if [ "$download_all_mode" = 1 ]; then
+        _total=$(printf "%s\n" "$anime_ep_list" | wc -l | tr -d ' ')
+        printf "\n  ${C_YELLOW}Download ${_total} episodes of '${anime_title}'?${C_RESET} [y/N] "
+        read -r _yn
+        [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+        printf "%s\n" "$anime_ep_list" | while IFS= read -r _ep; do
+            anime_play_episode "$_ep"
+        done
+        return
+    fi
+
     # select episode: -e flag / range / -1 / interactive
     case "$requested_eps" in
         "" ) 
@@ -966,6 +984,7 @@ anime_ep_list=""
 download_dir="${VICINE_DOWNLOAD_DIR:-$HOME/Movies}"
 no_detach="${VICINE_NO_DETACH:-0}"
 info_only=0
+download_all_mode=0
 menu_program="${VICINE_MENU:-fzf}"
 menu_extra_flags="${VICINE_MENU_FLAGS:-}"
 menu_multi_flag=""
@@ -1022,7 +1041,7 @@ while [ $# -gt 0 ]; do
         -S|--stats)       search_mode="stats" ;;
         -i|--info)        search_mode="info"; info_only=1 ;;
         -d|--download)    player_function="download" ;;
-        -D|--download-all) search_mode="download_all"; info_only=1 ;;
+        -D|--download-all) search_mode="download_all"; info_only=1; download_all_mode=1 ;;
         -p|--player)      shift; player_function="$1" ;;
         -q|--quality)     shift; quality="$1" ;;
         -e|--episode)     shift; requested_eps="$1" ;;
@@ -1102,6 +1121,50 @@ case "$search_mode" in
         [ -z "$query" ] && die "Missing query"
         cmd_search "$query"
         [ ! -f "$tmpfile2" ] && exit 0
+        mkdir -p "$download_dir"
+
+        # Series: download every episode of every season at the chosen quality
+        if is_series; then
+            _sc=$(season_count)
+            [ "$_sc" -eq 0 ] && die "No season data found."
+            _title="$(jq -r '.title' "$tmpfile2" | hdec)"
+            _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+
+            # Count episodes across all seasons using the same parser we download from
+            _total=0
+            _si=1
+            while [ "$_si" -le "$_sc" ]; do
+                _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
+                if [ -n "$_season_text" ]; then
+                    _ep_list=$(parse_episodes "$_season_text" "$quality")
+                    _n=$(printf '%s\n' "$_ep_list" | grep -c . || true)
+                    _total=$(( _total + _n ))
+                fi
+                _si=$(( _si + 1 ))
+            done
+
+            printf "\n  ${C_YELLOW}Download ${_total} episodes of '${_title}' (${_sc} season(s))?${C_RESET} [y/N] "
+            read -r _yn
+            [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+
+            _si=1
+            while [ "$_si" -le "$_sc" ]; do
+                _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
+                _ep_list=""
+                [ -n "$_season_text" ] && _ep_list=$(parse_episodes "$_season_text" "$quality")
+                if [ -n "$_ep_list" ]; then
+                    printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
+                        _enum=$(printf '%02d' "$_num")
+                        _resolved=$(resolve_stream_url "$_url")
+                        [ -n "$_resolved" ] && do_download "$_resolved" "${_safe}_S${_si}E${_enum}"
+                    done
+                fi
+                _si=$(( _si + 1 ))
+            done
+            exit 0
+        fi
+
+        # Movie: download all quality variants
         _links=$(jq -r '.links // empty' "$tmpfile2")
         [ -z "$_links" ] && die "No links found"
         _parsed="$(parse_links "$_links")"
@@ -1109,7 +1172,6 @@ case "$search_mode" in
         printf "\n  ${C_YELLOW}Download ${_count} quality variants?${C_RESET} [y/N] "
         read -r _yn
         [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
-        mkdir -p "$download_dir"
         _safe="$(jq -r '.title' "$tmpfile2" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         printf '%s\n' "$_parsed" | while IFS='	' read -r _url _desc _size; do
             _qual=$(printf "%s" "$_desc" | grep -oE '[0-9]+p' | head -1)
