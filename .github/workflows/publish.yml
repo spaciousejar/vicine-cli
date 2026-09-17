@@ -38,6 +38,7 @@ jobs:
       - name: Print published package location
         run: |
           ver="$(node -p "require('./package.json').version")"
+          npm dist-tag add "vicine@${ver}" latest
           echo "Published vicine@${ver}"
           echo "https://www.npmjs.com/package/vicine"
 
