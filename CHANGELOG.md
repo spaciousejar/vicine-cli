@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automate GitHub Releases on `v*` tag push — notes are generated from the commits since the previous tag (skipped if the release already exists).
 - Document the release flow and `anime` keyword in the README.
 
+> **Version note:** releases previously numbered 1.3.3–1.4.0 were
+> renumbered to 1.0.0–1.3.0. If your installed version shows one of the
+> old numbers, reinstall to pick up the current scheme.
+
 ## [1.2.4] - 2026-09-18
 
 ### Fixed
