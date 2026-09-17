@@ -91,6 +91,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-c${C_RESET}, ${C_CYAN}--continue${C_RESET}          Continue from history
     ${C_CYAN}-C${C_RESET}, ${C_CYAN}--clear-history${C_RESET}     Clear watch history
     ${C_CYAN}-U${C_RESET}, ${C_CYAN}--update${C_RESET}            Update the script
+    ${C_DIM}--uninstall${C_RESET}          Remove the script from disk
     ${C_CYAN}-i${C_RESET}, ${C_CYAN}--info${C_RESET}              Show info only (no play)
     ${C_CYAN}-d${C_RESET}, ${C_CYAN}--download${C_RESET}          Download instead of playing
     ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET}      Download full series or anime
@@ -980,6 +981,24 @@ update_script() {
     exit 0
 }
 
+uninstall_self() {
+    _bin="$0"
+    case "$_bin" in
+        */*) ;;
+        *) _bin="$(command -v "$_bin" 2>/dev/null || printf '%s' "$_bin")" ;;
+    esac
+    case "$_bin" in
+        */*) _bin="$(cd "$(dirname "$_bin")" 2>/dev/null && pwd)/$(basename "$_bin")" ;;
+    esac
+    [ -e "$_bin" ] || die "Cannot locate installed script (expected $_bin)"
+    rm -f "$_bin"
+    ok "Uninstalled $_bin"
+    if [ -d "$(dirname "$histfile")" ]; then
+        warn "Watch history kept at $(dirname "$histfile") — remove manually if undesired"
+    fi
+    exit 0
+}
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 # Config
@@ -1068,6 +1087,7 @@ while [ $# -gt 0 ]; do
         -C|--clear-history) search_mode="clear_history" ;;
         --exit-after-play) exit_after_play=1; no_detach=1 ;;
         -U|--update)      update_script ;;
+        --uninstall)      uninstall_self ;;
         -V|-v|--version|--v) version_info ;;  # -v/--v are common version aliases
         -h|--help)        help_info ;;
         --rofi)           menu_program="rofi" ;;

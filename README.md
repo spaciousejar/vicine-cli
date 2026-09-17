@@ -27,6 +27,12 @@ Published automatically to npmjs on every new `v*` tag (see [Releasing](#releasi
 npm install -g vicine
 ```
 
+### AUR (Arch Linux)
+
+```sh
+yay -S vicine
+```
+
 ### One-liner installer
 
 ```sh
@@ -57,6 +63,18 @@ sudo cp vicine /usr/local/bin/vicine
 
 - Installed via npm: `npm update -g vicine`
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
+
+### Uninstalling
+
+- Installed via npm: `npm uninstall -g vicine`
+- Installed via AUR: `sudo pacman -R vicine`
+- Installed via script/git — the script removes itself:
+
+  ```sh
+  vicine --uninstall
+  ```
+
+- Watch history under `~/.local/share/vicine` is kept; delete it manually if you want it gone.
 
 ## Releasing
 
@@ -129,6 +147,7 @@ vicine -i batman               # Show info only (no play)
 | `-C`, `--clear-history` | Clear watch history |
 | `-n`, `--select-nth` | Select result by index N (non-interactive) |
 | `-U`, `--update` | Self-update from GitHub (upgrade-only, refuses downgrades) |
+| `--uninstall` | Remove the script from disk (history is kept) |
 | `--exit-after-play` | Play then exit, return player exit code |
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `vicine --uninstall` removes the script from disk; watch history is kept.
+- README documents installing via the AUR package (`yay -S vicine`).
 - `-v`/`--v` are accepted as version aliases alongside `-V`/`--version`.
 - Align the help text columns and fix the "series and anime" tagline typo.
 - Switch npm publishing from GitHub Packages to npmjs.
