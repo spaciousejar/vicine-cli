@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.2.1"
+version_number="1.2.2"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-U${C_RESET}, ${C_CYAN}--update${C_RESET}       Update the script
     ${C_CYAN}-i${C_RESET}, ${C_CYAN}--info${C_RESET}         Show info only (no play)
     ${C_CYAN}-d${C_RESET}, ${C_CYAN}--download${C_RESET}     Download instead of playing
-    ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET} Download all qualities / full series / anime
+    ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET} Download full series or anime
     ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}       Specify player (mpv, iina, vlc)
     ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}      Show version
     ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}         Show this help
@@ -632,6 +632,7 @@ prompt_action() {
     _resolved=$(resolve_stream_url "$_best_url")
     [ -z "$_resolved" ] && warn "Failed to resolve URL." && return 1
     info "Playing: $_title"
+    play_url "$_resolved" "$_title"
 
     # Movie control menu loop
     while true; do
@@ -1164,21 +1165,8 @@ case "$search_mode" in
             exit 0
         fi
 
-        # Movie: download all quality variants
-        _links=$(jq -r '.links // empty' "$tmpfile2")
-        [ -z "$_links" ] && die "No links found"
-        _parsed="$(parse_links "$_links")"
-        _count=$(printf '%s\n' "$_parsed" | wc -l | tr -d ' ')
-        printf "\n  ${C_YELLOW}Download ${_count} quality variants?${C_RESET} [y/N] "
-        read -r _yn
-        [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
-        _safe="$(jq -r '.title' "$tmpfile2" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
-        printf '%s\n' "$_parsed" | while IFS='	' read -r _url _desc _size; do
-            _qual=$(printf "%s" "$_desc" | grep -oE '[0-9]+p' | head -1)
-            [ -z "$_qual" ] && _qual="alt"
-            _resolved=$(resolve_stream_url "$_url")
-            [ -n "$_resolved" ] && do_download "$_resolved" "${_safe}_${_qual}"
-        done
+        # Movies are downloaded with -d (single quality); -D covers whole series/anime only
+        die "-D downloads full series/anime only. Use -d to download a movie (single quality)."
         ;;
 esac
 
