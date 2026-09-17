@@ -134,7 +134,7 @@ vicine -i batman               # Show info only (no play)
 | `-d`, `--download` | Download instead of playing |
 | `-D`, `--download-all` | Download full series or anime (all episodes) |
 | `-p`, `--player` | Specify player (mpv, iina, vlc) |
-| `-V`, `--version` | Show version |
+| `-V`, `-v`, `--version`, `--v` | Show version |
 | `-h`, `--help` | Show help |
 | `--rofi` | Use rofi instead of fzf |
 | `--dmenu` | Use dmenu instead of fzf |

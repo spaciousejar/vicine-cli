@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `-v`/`--v` are accepted as version aliases alongside `-V`/`--version`.
+- Align the help text columns and fix the "series and anime" tagline typo.
 - Switch npm publishing from GitHub Packages to npmjs.
 - Automate GitHub Releases on `v*` tag push — notes are generated from the commits since the previous tag (skipped if the release already exists).
 - Document the release flow and `anime` keyword in the README.
