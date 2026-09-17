@@ -19,7 +19,7 @@ A POSIX shell script to search, stream, and download movies, series and anime fr
 
 ### npm
 
-Published automatically to npmjs on every new `v*` tag.
+Published automatically to npmjs on every new `v*` tag (see [Releasing](#releasing)).
 
 ```sh
 npm install -g vicine
@@ -56,6 +56,21 @@ sudo cp vicine /usr/local/bin/vicine
 - Installed via npm: `npm update -g vicine`
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
 
+## Releasing
+
+Releases are fully automated — one tag push is enough:
+
+```sh
+# bump the version in `vicine` (version_number) and `package.json`, commit, then:
+git tag -a v1.2.4 -m "v1.2.4"
+git push origin v1.2.4
+```
+
+`.github/workflows/publish.yml` then:
+
+1. publishes `vicine@<version>` to npmjs
+2. creates a GitHub Release with notes generated from the commits since the previous tag (skipped if the release already exists)
+
 ## Dependencies
 
 | Required | Optional |
@@ -88,7 +103,9 @@ vicine -c                      # Continue from watch history
 vicine -n 1 batman             # Play 2nd search result (non-interactive)
 vicine "jujutsu kaisen"        # Search movies/series via hicine; falls back to anidb.app
 vicine -A one piece            # Search anime directly on anidb.app
+vicine anime "one piece"       # Bare `anime` keyword — same as -A
 vicine -A --dub -e 3 "jujutsu kaisen"  # Anime ep 3, dubbed
+vicine -D -A "one piece"       # Download every episode of an anime
 vicine -i batman               # Show info only (no play)
 ```
 
@@ -96,14 +113,15 @@ vicine -i batman               # Show info only (no play)
 
 | Flag | Description |
 |------|-------------|
-| `-s`, `--search` | Search movies/series |
+| `anime` | Bare keyword alias for `-A` (search anime via anidb.app) |
+| `-s`, `--search` | Search movies/series/anime |
 | `-A`, `--anime` | Search anime via anidb.app |
 | `--dub` / `--sub` | Dub/sub audio for anime (default sub) |
 | `-t`, `--trending` | Show trending content |
 | `-r`, `--recent` | Show recently added |
 | `-b`, `--browse` | Browse a collection |
 | `-S`, `--stats` | Show catalogue stats |
-| `-q`, `--quality` | Select quality (`best`, `480p`, `720p`, `1080p`, `4K`) |
+| `-q`, `--quality` | Select quality (`best`, `480p`, `720p`, `1080p`, `2160p`; `4K` accepted as an alias) |
 | `-e`, `--episode` | Play episode `N`, range `N-M`, or `-1` (latest) |
 | `-c`, `--continue` | Continue from watch history |
 | `-C`, `--clear-history` | Clear watch history |
