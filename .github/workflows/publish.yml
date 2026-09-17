@@ -1,0 +1,45 @@
+name: Publish to GitHub Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: "@spaciousejar"
+          always-auth: true
+
+      - name: Verify package.json scope
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          test "$name" = "@spaciousejar/vicine" || {
+            echo "::error::package.json name must be @spaciousejar/vicine (GitHub Packages requires a scoped name); got: $name"
+            exit 1
+          }
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Print published package location
+        run: |
+          ver="$(node -p "require('./package.json').version")"
+          echo "Published @spaciousejar/vicine@${ver}"
+          echo "https://github.com/spaciousejar/vicine-cli/pkgs/npm/vicine"
