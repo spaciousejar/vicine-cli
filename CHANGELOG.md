@@ -5,6 +5,22 @@ All notable changes to **vicine** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Whole-season ZIP entries (`season_zip`): when a selected season has no
+  per-episode data, vicine picks the quality variant, resolves the archive
+  URL and downloads it (mpv can't stream zip containers). Verified live on
+  the "Dark Netflix" entry.
+
+### Fixed
+
+- Downloads fail loudly on HTTP errors (curl now uses `-f`, so a 403/404
+  error page is no longer saved and reported as success), partial files from
+  failed yt-dlp/ffmpeg attempts are cleaned up so retries aren't skipped, and
+  empty files don't count as already downloaded.
+
 ## [1.4.1] - 2026-09-20
 
 ### Changed

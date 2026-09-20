@@ -471,16 +471,19 @@ do_download() {
     _dl_safe="$(printf "%s" "$_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
     _dl_file="${download_dir}/${_dl_safe}.mp4"
 
-    [ -f "$_dl_file" ] && warn "Already exists: $_dl_file" && return 0
+    [ -s "$_dl_file" ] && warn "Already exists: $_dl_file" && return 0
 
     info "Downloading: $_dl_safe"
 
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp --referer "$_ref" --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+            yt-dlp --no-playlist --referer "$_ref" --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" && return 0
         else
-            yt-dlp --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
-        fi && ok "Saved: $_dl_file" && return 0
+            yt-dlp --no-playlist --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" && return 0
+        fi
+        # yt-dlp failed — drop any partial/error-page file so a retry isn't
+        # skipped by the "already exists" check
+        rm -f "$_dl_file"
     fi
     if command -v ffmpeg >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
@@ -488,11 +491,14 @@ do_download() {
         else
             ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
         fi
+        rm -f "$_dl_file"
     fi
+    # curl: -f makes HTTP errors (403/404) fail instead of saving the error
+    # body and claiming success
     if [ -n "$_ref" ]; then
-        curl -L -e "$_ref" --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file"
+        curl -fL -e "$_ref" --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" || { rm -f "$_dl_file"; warn "Download failed: $_url"; return 1; }
     else
-        curl -L --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file"
+        curl -fL --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" || { rm -f "$_dl_file"; warn "Download failed: $_url"; return 1; }
     fi
 }
 
@@ -656,8 +662,7 @@ prompt_action() {
                             return 0
                             ;;
                     esac
-                    _skip_flags="$(skip_flags_for "$_title" 1)"
-                    play_url "$_resolved" "${_title} :: ${_label}" "" "$_skip_flags"
+                    play_url "$_resolved" "${_title} :: ${_label}"
                     [ "$exit_after_play" = 1 ] && exit $?
                     update_history "$_slug" "$_title" series "$_sn" 0
                     return 0
