@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.3.0"
+version_number="1.4.0"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -652,7 +652,7 @@ prompt_action() {
                 _cur_ep="$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)"
                 ;;
             *-* )
-                # Range N-M (M=-1 => last episode). ani-cli-style parse:
+                # Range N-M (M=-1 => last episode):
                 _start=$(printf "%s" "$requested_eps" | grep -oE '^(-1|[0-9]+)' | head -1)
                 _end=$(printf "%s" "$requested_eps" | grep -oE '(-1|[0-9]+)$' | tail -1)
                 [ "$_end" = "-1" ] && _end="$(printf "%s\n" "$_ep_list" | tail -1 | cut -f1)"
@@ -665,7 +665,7 @@ prompt_action() {
         esac
         [ -z "$_cur_ep" ] && return 1
 
-        # validate -e target exists (ani-cli parity: die instead of silent no-op)
+        # validate -e target exists
         if [ -n "$requested_eps" ]; then
             if ! printf "%s\n" "$_ep_list" | awk -F'\t' -v n="$_cur_ep" '$1==n{found=1} END{exit !found}'; then
                 die "Episode $_cur_ep not released in season $_sn."
@@ -796,7 +796,7 @@ cmd_stats() {
     printf "\n"
 }
 
-# ─── Anime provider (ported from ani-cli) ──────────────────────────────────
+# ─── Anime provider
 
 anidb_curl() {
     $curl_exe -sL -A "$anime_agent" --max-time 10 "$@"
