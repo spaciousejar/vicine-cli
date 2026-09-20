@@ -5,6 +5,40 @@ All notable changes to **vicine** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Anime support now uses the HiAnime backend (`hianime.at`) instead of
+  anidb.app, whose endpoints no longer resolve. Search, episode listing,
+  and stream extraction were reworked against HiAnime's API; playback pulls
+  the HLS stream from the ZokoAnime embed (XOR-obfuscated player config,
+  decoded in-shell with no extra dependencies).
+- CDN streams are referer-gated — the player/downloader now send a
+  Referer header (mpv, IINA, VLC, yt-dlp, ffmpeg, curl).
+
+### Fixed
+
+- `-c` resume against stale history entries (written by the old provider with
+  different anime ids) now warns and suggests `-C` instead of dying.
+- The anime episode-list request (a ~1 MB JSON) got a longer timeout so it
+  doesn't truncate on slow connections.
+- IINA: the referer header is passed as `--mpv-http-header-fields=…` —
+  `iina-cli` silently drops raw mpv options placed before the URL, so the
+  header would never have reached mpv.
+- Anime: the "any server" fallback was removed — it only ever selected
+  MegaPlay embeds, which the decoder can't resolve — and variant URLs that
+  are already absolute are no longer double-prefixed with the master's path.
+- Anime: `-i`/`--info` is honored in the anime flow (prints title + episode
+  count instead of launching the player).
+- `do_download`: the yt-dlp fallback chain was rewritten — it no longer
+  retries without the referer after a referer-gated failure.
+
+### Added
+
+- `awk`, `base64` and `od` joined the required tools for the anime provider
+  (they decode the embed config); all ship with base systems / coreutils.
+
 ## [1.3.0] - 2026-09-18
 
 ### Added
@@ -69,4 +103,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-09-16
 
-- Initial public release: search, browse trending/recent/collections, stream via mpv/iina/vlc, download via yt-dlp/ffmpeg/curl, series playback, anime via anidb.app, one-liner installer, and npm packaging.
+- Initial public release: search, browse trending/recent/collections, stream via mpv/iina/vlc, download via yt-dlp/ffmpeg/curl, series playback, anime via hianime.at, one-liner installer, and npm packaging.

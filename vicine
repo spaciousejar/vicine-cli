@@ -79,7 +79,7 @@ ${C_WHITE}Commands:${C_RESET}
 
 ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}            Search movies/series/anime
-    ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}             Search anime directly (anidb.app)
+    ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}             Search anime directly (hianime.at)
     ${C_DIM}--dub / --sub${C_RESET}           Dub/sub audio for anime (default sub)
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}          Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
@@ -405,23 +405,30 @@ cmd_clear_history() {
 play_url() {
     _url="$1"
     _name="$2"
+    _ref="$3"
+    _hdr=""
+    [ -n "$_ref" ] && _hdr="--http-header-fields=Referer:$_ref"
+    # iina-cli drops raw mpv args placed before the URL; only --mpv-* is honored there
+    _iina_hdr=""
+    [ -n "$_ref" ] && _iina_hdr="--mpv-http-header-fields=Referer:$_ref"
     case "$player_function" in
         *iina*)
             if pgrep -f "IINA" >/dev/null 2>&1; then
-                nohup $player_function --no-stdin --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
+                nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
             else
-                nohup $player_function --no-stdin --keep-running --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
+                nohup $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
             fi
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup $player_function --force-media-title="$_name" "$_url" > /tmp/VICINE.mpv.log 2>&1 &
+                nohup $player_function $_hdr --force-media-title="$_name" "$_url" > /tmp/VICINE.mpv.log 2>&1 &
             else
-                $player_function --force-media-title="$_name" "$_url"
+                $player_function $_hdr --force-media-title="$_name" "$_url"
             fi
             ;;
-        download) do_download "$_url" "$_name" ;;
-        *) nohup $player_function "$_url" >/dev/null 2>&1 &
+        download) do_download "$_url" "$_name" "$_ref" ;;
+        *) if [ -n "$_ref" ]; then nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
+           else nohup $player_function "$_url" >/dev/null 2>&1 & fi ;;
     esac
 }
 
@@ -430,6 +437,7 @@ play_url() {
 do_download() {
     _url="$1"
     _name="$2"
+    _ref="$3"
     [ -z "$_url" ] && die "No URL to download"
     _dl_safe="$(printf "%s" "$_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
     _dl_file="${download_dir}/${_dl_safe}.mp4"
@@ -439,12 +447,24 @@ do_download() {
     info "Downloading: $_dl_safe"
 
     if command -v yt-dlp >/dev/null 2>&1; then
-        yt-dlp --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" && return 0
+        if [ -n "$_ref" ]; then
+            yt-dlp --referer "$_ref" --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+        else
+            yt-dlp --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+        fi && ok "Saved: $_dl_file" && return 0
     fi
     if command -v ffmpeg >/dev/null 2>&1; then
-        ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
+        if [ -n "$_ref" ]; then
+            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
+        else
+            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
+        fi
     fi
-    curl -L --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file"
+    if [ -n "$_ref" ]; then
+        curl -L -e "$_ref" --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file"
+    else
+        curl -L --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file"
+    fi
 }
 
 # ─── Episode controller ─────────────────────────────────────────────────────
@@ -747,32 +767,80 @@ anidb_curl() {
     $curl_exe -sL -A "$anime_agent" --max-time 10 "$@"
 }
 
-# search → lines "anime_id<TAB>title" 
+# search → lines "anime_id<TAB>title"
 anidb_search() {
     _q=$(henc "$1")
     _page="$(anidb_curl "$(printf "$anime_search_api" "$_q")" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
     [ -z "$_page" ] && return 1
-    printf "%s" "$_page" | sed -nE 's|.*anime/([a-z0-9-]+-[0-9]+)".*alt="([^"]+)".*|\1\t\2|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g'
+    printf "%s" "$_page" | sed -nE 's|.*href="[^"]*/watch/[^"]+"[^>]*title="([^"]*)"[^>]*data-id="([0-9]+)".*|\2\t\1|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g'
 }
 
-# episodes for anime → lines "ep_id<TAB>ep_no"
+# episodes for anime → lines "ep_id<TAB>ep_no" (JSON html unwrapped via jq)
+# the list can be ~1MB, so give this call a longer timeout than the default 10s
 anidb_episodes() {
-    _page="$(anidb_curl "$(printf "$anime_episodes_api" "${1##*-}")")"
-    printf "%s" "$_page" | sed 's|},{|}\n{|g' | sed -nE 's|.*"id":([0-9]+).*"number":([0-9]+).*|\1\t\2|p'
+    _page="$(anidb_curl --max-time 30 "$(printf "$anime_episodes_api" "${1##*-}")" | jq -r '.html // empty')"
+    printf "%s" "$_page" | tr '\n' ' ' | sed 's|data-number=|\ndata-number=|g' | sed -nE 's|.*data-number="([0-9]+)"[[:space:]]*data-id="([0-9]+)".*|\2\t\1|p' | awk '!seen[$0]++'
 }
 
-# extract m3u8 master + quality list for ep
+# zokoanime embed: window.__P is XOR("otaku-embed-v1") of base64(JSON) → m3u8 src
+ANIME_ZOKO_KEY="otaku-embed-v1"
+zoko_xor() {
+    # base64 → od decimal bytes → numeric XOR with key → plaintext JSON (ASCII)
+    _kn="$(printf '%s' "$ANIME_ZOKO_KEY" | od -An -v -tu1 | sed 's/^ *//')"
+    { base64 -d 2>/dev/null || base64 -D 2>/dev/null; } |
+        od -An -v -tu1 |
+        awk -v kn="$_kn" '
+            function bxor(a,b,  i,r){ for(i=0;i<8;i++){ r+=((a%2)!=(b%2))*2^i; a=int(a/2); b=int(b/2) } return r }
+            BEGIN { n=split(kn, kc, /[ \n]+/); idx=0 }
+            { for (i=1;i<=NF;i++){ printf "%c", bxor($i, kc[(idx%n)+1]); idx++ } }'
+}
+zoko_src_of() {
+    _page="$1"
+    _blob="$(printf "%s" "$_page" | sed -nE 's|.*window\.__P="([^"]+)".*|\1|p' | head -n 1)"
+    [ -z "$_blob" ] && return 1
+    _dec="$(printf "%s" "$_blob" | zoko_xor)"
+    [ -z "$_dec" ] && return 1
+    printf "%s" "$_dec" | grep -oE '"src":"[^"]+"' | head -n 1 | sed -E 's|^"src":"||; s|"$||'
+}
+
+# CDN calls are referer-gated by hls.1embed.buzz
+anime_cdn_curl() {
+    $curl_exe -sL -A "$anime_agent" -e "$anime_embed_ref" --max-time 15 "$@"
+}
+
+# extract m3u8 quality list ("RES>URL" lines, best first) for ep
 anidb_m3u8() {
     _ep_id=$(printf "%s" "$anime_ep_maps" | sed -nE "s|^([0-9]+)\t${1}$|\1|p")
-    _lang="jpn"
-    [ "$anime_mode" = "dub" ] && _lang="eng"
-    _page="$(anidb_curl "$(printf "$anime_m3u8_api" "${_ep_id}")")"
-    _embed="$(printf "%s" "$_page" | sed 's|},{|}\n{|g' | sed -nE 's|.*'"${_lang}"'.*embed_url":"([^"]+)".*|\1|p' | sed 's|\\/|/|g' | head -n 1)"
-    [ -z "$_embed" ] && return 1
-    _embed_page="$(anidb_curl "$_embed")"
-    _m3u8_master="$(printf "%s" "$_embed_page" | sed -nE "s|.*file: '([^']*)'.*|\1|p" | head -n 1)"
-    [ -z "$_m3u8_master" ] && return 1
-    anidb_curl "${_m3u8_master}" | sed 's|^#EXT-X-STREAM.*x||g; s|,.*|p|g; /^#/d; $!N; s|\n| >|;/EXT-X-I-FRAME/d'
+    _lang="sub"
+    [ "$anime_mode" = "dub" ] && _lang="dub"
+    _page="$(anidb_curl "$(printf "$anime_servers_api" "${_ep_id}")" | jq -r '.html // empty')"
+    _hash="$(printf "%s" "$_page" | tr '\n' ' ' | sed -nE "s|.*server-item[^>]*data-type=\"${_lang}\"[^>]*data-server-name=\"ZokoAnime\"[^>]*data-hash=\"([^\"]+)\".*|\1|p" | head -n 1)"
+    # only ZokoAnime embeds are decodable (MegaPlay/Vidstream need AES + segment prefix-stripping)
+    [ -z "$_hash" ] && return 1
+    _embed="$(printf "%s" "$_hash" | base64 -d 2>/dev/null || printf "%s" "$_hash" | base64 -D 2>/dev/null)"
+    _embed_page="$(anime_cdn_curl "$_embed")"
+    _master="$(zoko_src_of "$_embed_page")"
+    [ -z "$_master" ] && return 1
+    _mp="$(anime_cdn_curl "$_master")"
+    _master_dir="$(dirname "$_master")"
+    _variants="$(printf "%s" "$_mp" | grep -E '^[0-9]+/index\.m3u8$')"
+    if [ -z "$_variants" ]; then
+        printf "auto>%s\n" "$_master"
+        return 0
+    fi
+    printf "%s\n" "$_mp" | while IFS= read -r _line; do
+        case "$_line" in
+            *RESOLUTION=*) _res="$(printf "%s" "$_line" | sed -nE 's|.*RESOLUTION=[0-9]+x([0-9]+).*|\1|p')" ;;
+        esac
+        case "$_line" in
+            [0-9]*/index.m3u8)
+                case "$_line" in
+                    http*) _url="$_line" ;;
+                    *)     _url="$_master_dir/$_line" ;;
+                esac
+                printf "%sp>%s\n" "$_res" "$_url" ;;
+        esac
+    done | sort -rn
 }
 
 # pick quality variant → prints chosen m3u8 line to stdout (sets nothing)
@@ -797,15 +865,15 @@ anime_play_episode() {
     if [ "$download_all_mode" = 1 ]; then
         _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         _epnum=$(printf '%02d' "$_ep_no")
-        do_download "$_video_link" "${_safe}_Ep${_epnum}"
+        do_download "$_video_link" "${_safe}_Ep${_epnum}" "$anime_embed_ref"
     else
         info "Playing ep ${_ep_no}: ${anime_title}"
-        play_url "$_video_link" "$anime_title - Episode $_ep_no"
+        play_url "$_video_link" "$anime_title - Episode $_ep_no" "$anime_embed_ref"
         update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
     fi
 }
 
-# play loop (ani-cli style control menu) for anime.
+# play loop for anime.
 # Globals used: anime_ep_list, anime_title, _cur_ep, _range_end
 anime_play_loop() {
     while true; do
@@ -866,7 +934,10 @@ anime_resume() {
     _ep_db="$3"
     info "Fetching episodes for $anime_title"
     anime_ep_maps="$(anidb_episodes "$anime_id")"
-    [ -z "$anime_ep_maps" ] && die "No episodes found for $anime_title."
+    if [ -z "$anime_ep_maps" ]; then
+        warn "No episodes found — this history entry was written by an older provider. Clear it with 'vicine -C'."
+        return 1
+    fi
     anime_ep_list="$(printf "%s" "$anime_ep_maps" | cut -f 2)"
     [ -z "$anime_ep_list" ] && die "No episodes found for $anime_title."
     _cur_ep="$_ep_db"
@@ -904,6 +975,12 @@ cmd_anime() {
     anime_ep_maps="$(anidb_episodes "$anime_id")"
     [ -z "$anime_ep_maps" ] && die "No episodes found."
     anime_ep_list="$(printf "%s" "$anime_ep_maps" | cut -f 2)"
+
+    if [ "$info_only" -eq 1 ]; then
+        _total=$(printf "%s\n" "$anime_ep_list" | wc -l | tr -d ' ')
+        printf "  %s\n  %s episodes\n" "$anime_title" "$_total"
+        return 0
+    fi
 
     # Download-all mode: confirm once, then download every episode
     if [ "$download_all_mode" = 1 ]; then
@@ -947,7 +1024,7 @@ cmd_anime() {
             ;;
     esac
 
-    # play loop (ani-cli style control menu)
+    # play loop (control menu)
     anime_play_loop
 }
 
@@ -1004,11 +1081,14 @@ uninstall_self() {
 # Config
 API="https://api.hicine.sbs"
 provider="${VICINE_PROVIDER:-hicine}"
-anime_base="https://anidb.app"
-anime_search_api="${anime_base}/browse?q=%s"
-anime_desc_api="${anime_base}/anime/%s"
-anime_episodes_api="${anime_base}/api/frontend/anime/%s/episodes"
-anime_m3u8_api="${anime_base}/api/frontend/episode/%s/languages"
+# HiAnime backend (hianimes.se is a page-only mirror: its /search and /api/*
+# routes 307 to /home, so the API calls below must go to hianime.at).
+anime_base="https://hianime.at"
+anime_search_api="${anime_base}/search?keyword=%s"
+anime_episodes_api="${anime_base}/api/theme/episode/list/%s"
+anime_servers_api="${anime_base}/api/theme/episode/servers?episodeId=%s"
+# playback embeds come from zokoanime.video/…; hls.1embed.buzz CDN is referer-gated
+anime_embed_ref="https://zokoanime.video/"
 anime_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 anime_mode="${VICINE_ANIME_MODE:-sub}"
 anime_ep_maps=""

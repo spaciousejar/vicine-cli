@@ -15,7 +15,11 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Stream** directly in mpv, IINA, or VLC
 - **Download** with yt-dlp, ffmpeg, or curl
 - **Series support** — season/episode navigation with next/previous/replay controls
-- **Anime support** — dub/sub audio via anidb.app
+- **Anime support** — dub/sub audio via hianime.at
+
+> Anime streams are pulled from the ZokoAnime server. Some titles only offer
+> MegaPlay-based servers, which can't be resolved by the script — those show
+> "No sources found".
 
 ## Installation
 
@@ -97,7 +101,8 @@ git push origin v1.3.0
 |----------|----------|
 | `curl` | `yt-dlp` or `ffmpeg` (for downloads) |
 | `jq` | `vlc` |
-| `sed`, `grep` | `iina` (macOS) |
+| `sed`, `grep`, `awk` | `iina` (macOS) |
+| `base64`, `od` (anime provider) | |
 | `fzf` (or `rofi`/`dmenu`) | |
 | `mpv` (or `iina` on macOS) | |
 
@@ -121,8 +126,8 @@ vicine -q 720p -e 3 stranger things   # Play ep 3 in 720p
 vicine -q 1080p -e 5-8 stranger things # Play eps 5-8 in 1080p
 vicine -c                      # Continue from watch history
 vicine -n 1 batman             # Play 2nd search result (non-interactive)
-vicine "jujutsu kaisen"        # Search movies/series via hicine; falls back to anidb.app
-vicine -A one piece            # Search anime directly on anidb.app
+vicine "jujutsu kaisen"        # Search movies/series via hicine; falls back to hianime.at
+vicine -A one piece            # Search anime directly on hianime.at
 vicine anime "one piece"       # Bare `anime` keyword — same as -A
 vicine -A --dub -e 3 "jujutsu kaisen"  # Anime ep 3, dubbed
 vicine -D -A "one piece"       # Download every episode of an anime
@@ -133,9 +138,9 @@ vicine -i batman               # Show info only (no play)
 
 | Flag | Description |
 |------|-------------|
-| `anime` | Bare keyword alias for `-A` (search anime via anidb.app) |
+| `anime` | Bare keyword alias for `-A` (search anime via hianime.at) |
 | `-s`, `--search` | Search movies/series/anime |
-| `-A`, `--anime` | Search anime via anidb.app |
+| `-A`, `--anime` | Search anime via hianime.at |
 | `--dub` / `--sub` | Dub/sub audio for anime (default sub) |
 | `-t`, `--trending` | Show trending content |
 | `-r`, `--recent` | Show recently added |
