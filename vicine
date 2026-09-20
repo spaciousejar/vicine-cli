@@ -471,7 +471,7 @@ do_download() {
     _dl_safe="$(printf "%s" "$_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
     _dl_file="${download_dir}/${_dl_safe}.mp4"
 
-    [ -s "$_dl_file" ] && warn "Already exists: $_dl_file" && return 0
+    [ -s "$_dl_file" ] && { warn "Already exists: $_dl_file (delete it if a previous download was interrupted)"; return 0; }
 
     info "Downloading: $_dl_safe"
 

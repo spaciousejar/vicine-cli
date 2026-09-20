@@ -16,12 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Downloads fail loudly on HTTP errors (curl now uses `-f`, so a 403/404
-  error page is no longer saved and reported as success), and interrupted
-  downloads can't masquerade as complete files: everything stages to
-  `<name>.part` and only an atomic rename publishes the final file. yt-dlp's
-  own staging is kept for resuming large archives (a 5.5 GiB season zip
-  interrupted at 2% previously left a "complete-looking" partial).
+- The "Already exists" fast-path now hints that the file may be a partial from
+  an interrupted download (older versions wrote directly to the final name;
+  a Ctrl-C at 0.5% on a 3.9 GB movie left a 21 MB "complete-looking" file
+  that blocked re-downloads until deleted).
 - Whole-season ZIP downloads probe the resolved URL (1-byte range request),
   re-resolve up to 3 times, and fall back to the season's other quality
   variant (different workers URL, independent cache): a stale, expired signed
