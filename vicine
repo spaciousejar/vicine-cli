@@ -35,6 +35,7 @@ fi
 
 die() {
     printf "\33[2K\r${C_RED}  x %s${C_RESET}\n" "$*" >&2
+    _exit_code=1
     exit 1
 }
 
@@ -141,8 +142,12 @@ dep_ch_failover() {
 _exit_code=0
 
 cleanup() {
+    # preserve the code we're exiting with (die/player rc on_sigint) — the
+    # trap fires on any exit and must not flatten everything to 0
+    _rc=$?
+    [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4"
     exit "$_exit_code"
 }
 
@@ -197,8 +202,9 @@ parse_links() {
     printf "%s\n" "$1" | while IFS= read -r line; do
         line="$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         [ -z "$line" ] && continue
-        # Drop the fixed mid-link placeholder fields (Link2..Link7) so they
-        # can't be mistaken for data and URLs keep their commas.
+        # Drop the fixed mid-link placeholder fields (Link2..Link7) so they can't be
+        # mistaken for data. The line is then "URL, Description, Size" — the URL
+        # itself is expected to be comma-free, hence cut -d',' -f1 below.
         line="$(printf "%s" "$line" | sed 's/, *Link[0-9] *//g')"
         url="$(printf "%s" "$line" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         _rest="$(printf "%s" "$line" | cut -d',' -f2- | sed 's/^[[:space:]]*//')"
@@ -220,6 +226,8 @@ parse_episodes() {
         # skip dead stub entries
         printf "%s" "$line" | grep -q 'vcloud=empty' && continue
         _ep_num="$(printf "%s" "$line" | sed 's/Episode \([0-9]*\) :.*/\1/')"
+        # normalize "03" → "3" so -e 3 matches
+        _ep_num="$(printf "%s" "$_ep_num" | sed 's/^0*\(.\)/\1/')"
         _variants="$(printf "%s" "$line" | sed 's/Episode [0-9]* : //')"
         _best="$(printf "%s" "$_variants" | sed 's/.* : //' | tail -1)"
         if [ -n "$_want" ]; then
@@ -256,8 +264,8 @@ select_item() {
         return 0
     fi
 
-    # Build display list: "01  Title  [type]  (year)"
-    jq -r 'to_entries[] | "\(.key | tostring | if length < 2 then "0" + . else . end)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" > "$tmpfile3"
+    # Build display list (1-based, like the anime menu): "1  Title  [type]  (year)"
+    jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" > "$tmpfile3"
 
     # Non-interactive select-nth (e.g. -n 2)
     if [ -n "$select_nth" ]; then
@@ -270,8 +278,8 @@ select_item() {
     _selection=$(cat "$tmpfile3" | menu "Select (${_count} results): ") || return 1
     [ -z "$_selection" ] && return 1
 
-    # Extract first index from selection
-    _idx=$(printf "%s" "$_selection" | awk '{print $1+0}')
+    # Extract first index from selection (display is 1-based, array is 0-based)
+    _idx=$(printf "%s" "$_selection" | awk '{print $1-1}')
     [ -z "$_idx" ] && return 1
 
     jq ".[${_idx}]" "$tmpfile" > "$tmpfile2"
@@ -309,7 +317,7 @@ show_info() {
     while [ "$_i" -le 20 ]; do
         _season=$(jq -r ".season_${_i} // empty" "$_f")
         if [ -n "$_season" ]; then
-            _ep_count=$(printf "%s" "$_season" | grep -c '^Episode' || echo 0)
+            _ep_count=$(printf "%s" "$_season" | grep -c '^Episode')
             printf "\n"
             printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s episodes)${C_RESET}\n" "$_i" "$_ep_count"
         fi
@@ -349,7 +357,8 @@ get_episode_url() {
 
 # Get episode display name by number
 get_episode_name() {
-    printf '%s' "$_ep_list" | awk -F '\t' '$1 ~ /^[0-9]+$/ {printf "Episode %s (%s, %s)\n", $1, $3, $4}'
+    _num="$1"
+    printf '%s' "$_ep_list" | awk -F '\t' -v n="$_num" '$1==n && $1 ~ /^[0-9]+$/ {printf "Episode %s (%s, %s)\n", $1, $3, $4}'
 }
 
 
@@ -368,12 +377,12 @@ cmd_history() {
     [ -f "$histfile" ] && [ -s "$histfile" ] || { warn "No watch history yet."; return 0; }
     _count=$(wc -l < "$histfile")
     printf "" > "$tmpfile3"
-    awk -F'\t' '{ printf "%s  %s", NR-1, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" >> "$tmpfile3"
+    awk -F'\t' '{ printf "%d  %s", NR, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" >> "$tmpfile3"
     _pick=$(cat "$tmpfile3" | menu "Continue (${_count}): ")
     [ -z "$_pick" ] && return 0
     _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
     [ -z "$_idx" ] && return 0
-    _entry=$(sed -n "$((_idx + 1))p" "$histfile")
+    _entry=$(sed -n "${_idx}p" "$histfile")
     resume_season=$(printf "%s" "$_entry" | cut -f4)
     resume_ep=$(printf "%s" "$_entry" | cut -f5)
     _type=$(printf "%s" "$_entry" | cut -f3)
@@ -413,6 +422,11 @@ play_url() {
     [ -n "$_ref" ] && _iina_hdr="--mpv-http-header-fields=Referer:$_ref"
     case "$player_function" in
         *iina*)
+            if [ "$exit_after_play" = 1 ]; then
+                # foreground so the player's exit code is returned
+                $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url"
+                return $?
+            fi
             if pgrep -f "IINA" >/dev/null 2>&1; then
                 nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
             else
@@ -421,14 +435,24 @@ play_url() {
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup $player_function $_hdr --force-media-title="$_name" "$_url" > /tmp/VICINE.mpv.log 2>&1 &
+                nohup $player_function $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 &
             else
                 $player_function $_hdr --force-media-title="$_name" "$_url"
+                return $?
             fi
             ;;
         download) do_download "$_url" "$_name" "$_ref" ;;
-        *) if [ -n "$_ref" ]; then nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
-           else nohup $player_function "$_url" >/dev/null 2>&1 & fi ;;
+        *)
+            if [ "$exit_after_play" = 1 ]; then
+                if [ -n "$_ref" ]; then
+                    $player_function --http-referrer="$_ref" "$_url"
+                else
+                    $player_function "$_url"
+                fi
+                return $?
+            fi
+            if [ -n "$_ref" ]; then nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
+            else nohup $player_function "$_url" >/dev/null 2>&1 & fi ;;
     esac
 }
 
@@ -489,11 +513,15 @@ episode_loop() {
 
         info "Playing ep ${_cur_ep}/${_ep_total}: ${_title}"
         play_url "$_resolved" "$_title - $_ep_name"
+        _rc=$?
         _prev_pid=$!
 
         # Auto-save watch progress
         _slug="${_slug:-$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)}"
         [ -n "$_slug" ] && update_history "$_slug" "$_title" series "$_sn" "$_cur_ep"
+
+        # --exit-after-play: stop here and propagate the player's exit code
+        [ "$exit_after_play" = 1 ] && exit "$_rc"
 
         # Auto-advance in range mode
         if [ -n "$_range_end" ]; then
@@ -658,6 +686,8 @@ prompt_action() {
     [ -z "$_resolved" ] && warn "Failed to resolve URL." && return 1
     info "Playing: $_title"
     play_url "$_resolved" "$_title"
+    # --exit-after-play: play once and return the player's exit code
+    [ "$exit_after_play" = 1 ] && exit $?
 
     # Movie control menu loop
     while true; do
@@ -834,6 +864,8 @@ anidb_m3u8() {
         esac
         case "$_line" in
             [0-9]*/index.m3u8)
+                # fall back to the variant's path prefix when RESOLUTION is absent
+                [ -z "$_res" ] && _res="$(printf '%s' "$_line" | sed -nE 's|^([0-9]+)/.*|\1|p')"
                 case "$_line" in
                     http*) _url="$_line" ;;
                     *)     _url="$_master_dir/$_line" ;;
@@ -869,7 +901,9 @@ anime_play_episode() {
     else
         info "Playing ep ${_ep_no}: ${anime_title}"
         play_url "$_video_link" "$anime_title - Episode $_ep_no" "$anime_embed_ref"
+        _rc=$?
         update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
+        [ "$exit_after_play" = 1 ] && exit "$_rc"
     fi
 }
 
@@ -1054,8 +1088,16 @@ update_script() {
 
     # validate the payload before replacing the script
     printf "%s\n" "$_new" | sh -n >/dev/null 2>&1 || die "Fetched script failed syntax check — not updating."
-    printf "%s\n" "$_new" > "$0" && chmod +x "$0" && ok "Updated: $version_number -> $_new_ver"
-    exit 0
+    # atomic replace: write a temp next to the target, then mv. This both
+    # surfaces write failures and avoids the running shell reading a half-
+    # written file (dash reads scripts in chunks).
+    _tmp="$0.tmp.$$"
+    if printf "%s\n" "$_new" > "$_tmp" && chmod 755 "$_tmp" && mv -f "$_tmp" "$0"; then
+        ok "Updated: $version_number -> $_new_ver"
+        exit 0
+    fi
+    rm -f "$_tmp"
+    die "Update failed: cannot write $0 — check permissions or run as the file owner."
 }
 
 uninstall_self() {
@@ -1068,8 +1110,11 @@ uninstall_self() {
         */*) _bin="$(cd "$(dirname "$_bin")" 2>/dev/null && pwd)/$(basename "$_bin")" ;;
     esac
     [ -e "$_bin" ] || die "Cannot locate installed script (expected $_bin)"
-    rm -f "$_bin"
-    ok "Uninstalled $_bin"
+    if rm -f "$_bin"; then
+        ok "Uninstalled $_bin"
+    else
+        die "Uninstalled: cannot remove $_bin — check permissions."
+    fi
     if [ -d "$(dirname "$histfile")" ]; then
         warn "Watch history kept at $(dirname "$histfile") — remove manually if undesired"
     fi
@@ -1117,6 +1162,7 @@ mkdir -p "$(dirname "$histfile")" 2>/dev/null
 tmpfile=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile2=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile3=$(mktemp /tmp/VICINE.XXXXXX)
+tmpfile4=$(mktemp /tmp/VICINE.XXXXXX)
 trap cleanup EXIT
 trap on_sigint INT
 trap cleanup HUP TERM
@@ -1156,7 +1202,7 @@ while [ $# -gt 0 ]; do
         -r|--recent)      search_mode="recent" ;;
         -b|--browse)      search_mode="browse"; shift; _browse_col="$1"; [ -z "$_browse_col" ] && die "Missing collection name for -b" ;;
         -S|--stats)       search_mode="stats" ;;
-        -i|--info)        search_mode="info"; info_only=1 ;;
+        -i|--info)        [ -z "$search_mode" ] && search_mode="info"; info_only=1 ;;
         -d|--download)    player_function="download" ;;
         -D|--download-all) info_only=1; download_all_mode=1; [ -z "$search_mode" ] && search_mode="download_all" ;;
         -p|--player)      shift; player_function="$1" ;;
@@ -1194,27 +1240,41 @@ dep_ch "$menu_program"
 case "$player_function" in
     download) dep_ch_failover "yt-dlp,ffmpeg" >/dev/null || die "Need yt-dlp or ffmpeg for downloads" ;;
     *mpv*) dep_ch mpv ;;
-    *iina*) ;; # don't check on macOS if not available
+    *iina*)
+        # only reachable with an installed IINA (Darwin default fails over to mpv) or -p iina
+        case "$player_function" in
+            */*) [ -x "$player_function" ] || die "Player not found: $player_function" ;;
+            *) command -v "$player_function" >/dev/null 2>&1 || die "iina-cli not found in PATH. Install IINA or set VICINE_PLAYER to the iina-cli path." ;;
+        esac
+        ;;
     *) dep_ch "$player_function" ;;
 esac
 
 # Default to search
 [ -z "$search_mode" ] && search_mode="search"
 
-# 4K is 2160p — normalize so -q 4K matches "2160p" variants everywhere
-[ "$quality" = "4K" ] && quality="2160p"
+# -D wins over -i regardless of flag order, except for -D -A: anime
+# download-all is handled inside cmd_anime, so keep search_mode="anime"
+[ "$download_all_mode" = 1 ] && [ "$search_mode" != "anime" ] && search_mode="download_all"
+
+# Normalize quality: lowercase (480P → 480p...) and 4K/4k → 2160p so -q
+# matches variants everywhere; the anime picker's grep is case-sensitive
+quality="$(printf '%s' "$quality" | tr '[:upper:]' '[:lower:]')"
+[ "$quality" = "4k" ] && quality="2160p"
 
 # Run command
 case "$search_mode" in
     search)
         while [ -z "$query" ]; do
-            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}" && read -r query
+            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}"
+            read -r query || die "No search query provided."
         done
         cmd_search "$query"
         ;;
     anime)
         while [ -z "$query" ]; do
-            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}" && read -r query
+            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}"
+            read -r query || die "No anime search query provided."
         done
         cmd_anime "$query"
         ;;

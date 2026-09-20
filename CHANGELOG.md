@@ -33,6 +33,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count instead of launching the player).
 - `do_download`: the yt-dlp fallback chain was rewritten — it no longer
   retries without the referer after a referer-gated failure.
+- `--exit-after-play` now does what it promises: plays in the foreground,
+  skips the control menu, and exits with the player's exit code. Exit codes
+  in general are no longer flattened to 0 by the EXIT trap (previously
+  `die`, Ctrl-C, and player exit codes all surfaced as 0).
+- Interactive search prompts exit cleanly on EOF instead of busy-looping at
+  100% CPU (`vicine < /dev/null` no longer hangs).
+- Series player title: `get_episode_name` now shows only the played episode
+  instead of dumping the whole season into the title bar.
+- `vicine -U` replaces the script atomically (temp file + mv) and reports a
+  clear failure when the target isn't writable, instead of silently
+  succeeding.
+- `--uninstall` reports an error if the file can't be removed.
+- `-D` wins over `-i` regardless of flag order (except `-D -A`, which stays
+  on the anime download-all path).
+- Result and watch-history menus are now 1-based and unpadded (previously
+  "00", "01"…); series episode numbers are normalized, so `-e 3` matches
+  "Episode 03" if the API ever pads.
+- `-q` is case-insensitive and `4k`/`4K` normalize to `2160p`.
+- The mpv debug log moved to a per-run temp file that's cleaned up; no more
+  shared/world-writable `/tmp/VICINE.mpv.log`.
+- `-p iina` fails loudly when `iina-cli` isn't available instead of launching
+  a silent "command not found".
+- Anime quality labels fall back to the variant path when the master playlist
+  omits `RESOLUTION`.
 
 ### Added
 
