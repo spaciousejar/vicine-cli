@@ -644,29 +644,41 @@ prompt_action() {
                 _zip_line="$(printf "%s\n" "$_zip" | grep -E "^Season ${_sn} : " | head -n 1)"
                 if [ -n "$_zip_line" ]; then
                     _variants="$(printf "%s" "$_zip_line" | sed 's/^Season [0-9]* : //; s/ : /\n/g')"
+                    # order candidates: requested quality first, then the rest
+                    # (the other variant uses a different workers URL — if the
+                    # chosen one resolves to a stale signed URL, its sibling
+                    # may still be fresh)
                     if [ "$quality" != "best" ]; then
-                        _pick="$(printf "%s\n" "$_variants" | awk -F',' -v q="$quality" 'tolower($NF)==tolower(q){print; exit}')"
-                        [ -z "$_pick" ] && _pick="$(printf "%s\n" "$_variants" | tail -1)"
-                    else
-                        _pick="$(printf "%s\n" "$_variants" | tail -1)"
-                    fi
-                    _url="$(printf "%s" "$_pick" | cut -d',' -f1 | sed 's/^ *//;s/ *$//')"
-                    _label="$(printf "%s" "$_pick" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
-                    # resolve, then probe with a 1-byte range request: the
-                    # workers resolver sometimes returns a stale signed URL
-                    # (403); retry to get a fresh signature before committing
-                    # to a multi-GB download
-                    _resolved=""
-                    _try=1
-                    while [ "$_try" -le 3 ]; do
-                        _resolved="$(resolve_stream_url "$_url")"
-                        if [ -n "$_resolved" ] && curl -sfL -r 0-0 -o /dev/null --max-time 30 "$_resolved" 2>/dev/null; then
-                            break
+                        _match="$(printf "%s\n" "$_variants" | awk -F',' -v q="$quality" 'tolower($NF)==tolower(q){print}')"
+                        if [ -n "$_match" ]; then
+                            _ordered="$(printf "%s\n%s\n" "$_match" "$_variants" | awk '!seen[$0]++')"
+                        else
+                            _ordered="$_variants"
                         fi
-                        _resolved=""
-                        _try=$(( _try + 1 ))
-                        [ "$_try" -le 3 ] && sleep 1
-                    done
+                    else
+                        _ordered="$(printf "%s\n%s\n" "$(printf "%s\n" "$_variants" | tail -1)" "$_variants" | awk '!seen[$0]++')"
+                    fi
+                    # resolve + probe (1-byte range) each candidate: the workers
+                    # resolver sometimes returns a stale expired signed URL
+                    # (403); drop those before committing to a multi-GB download
+                    _resolved=""
+                    _label=""
+                    printf "%s\n" "$_ordered" > "$tmpfile3"
+                    while IFS= read -r _cand; do
+                        [ -n "$_resolved" ] && break
+                        _u="$(printf "%s" "$_cand" | cut -d',' -f1 | sed 's/^ *//;s/ *$//')"
+                        _try=1
+                        while [ "$_try" -le 3 ]; do
+                            _r="$(resolve_stream_url "$_u")"
+                            if [ -n "$_r" ] && curl -sfL -r 0-0 -o /dev/null --max-time 30 "$_r" 2>/dev/null; then
+                                _resolved="$_r"
+                                _label="$(printf "%s" "$_cand" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
+                                break
+                            fi
+                            _try=$(( _try + 1 ))
+                            [ "$_try" -le 3 ] && sleep 1
+                        done
+                    done < "$tmpfile3"
                     if [ -z "$_resolved" ]; then
                         warn "Failed to resolve season $_sn URL."
                         return 1

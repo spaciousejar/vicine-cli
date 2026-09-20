@@ -22,10 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<name>.part` and only an atomic rename publishes the final file. yt-dlp's
   own staging is kept for resuming large archives (a 5.5 GiB season zip
   interrupted at 2% previously left a "complete-looking" partial).
-- Whole-season ZIP downloads probe the resolved URL (1-byte range request)
-  and re-resolve up to 3 times: the workers resolver sometimes caches a
-  stale, already-expired signed URL (403 on `Dark.S03.720p.zip`), which is
-  now caught before a long doomed download instead of after it.
+- Whole-season ZIP downloads probe the resolved URL (1-byte range request),
+  re-resolve up to 3 times, and fall back to the season's other quality
+  variant (different workers URL, independent cache): a stale, expired signed
+  URL on one variant (e.g. `Dark.S03.720p.zip`) no longer blocks the season —
+  the sibling variant or a fresh resolution is tried first.
 
 ## [1.4.1] - 2026-09-20
 
