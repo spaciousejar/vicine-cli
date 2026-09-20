@@ -475,31 +475,38 @@ do_download() {
 
     info "Downloading: $_dl_safe"
 
+    # Stage to $_dl_file.part and rename on success, so an interrupted
+    # download can never leave a partial file that looks complete. yt-dlp's
+    # own .part staging is left in place on failure so it can resume.
+    _pt="${_dl_file}.part"
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp --no-playlist --referer "$_ref" --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" && return 0
+            yt-dlp --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         else
-            yt-dlp --no-playlist --no-part --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" && return 0
+            yt-dlp --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         fi
-        # yt-dlp failed — drop any partial/error-page file so a retry isn't
-        # skipped by the "already exists" check
-        rm -f "$_dl_file"
+        rm -f "$_pt"
     fi
+    # fallbacks don't resume — start clean
+    rm -f "$_pt" "$_pt.part"
     if command -v ffmpeg >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
+            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         else
-            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_dl_file" 2>/dev/null && ok "Saved: $_dl_file" && return 0
+            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         fi
-        rm -f "$_dl_file"
+        rm -f "$_pt"
     fi
     # curl: -f makes HTTP errors (403/404) fail instead of saving the error
     # body and claiming success
     if [ -n "$_ref" ]; then
-        curl -fL -e "$_ref" --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" || { rm -f "$_dl_file"; warn "Download failed: $_url"; return 1; }
+        curl -fL -e "$_ref" --progress-bar -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
     else
-        curl -fL --progress-bar -o "$_dl_file" "$_url" && ok "Saved: $_dl_file" || { rm -f "$_dl_file"; warn "Download failed: $_url"; return 1; }
+        curl -fL --progress-bar -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
     fi
+    rm -f "$_pt"
+    warn "Download failed: $_url"
+    return 1
 }
 
 # ─── Episode controller ─────────────────────────────────────────────────────
@@ -645,7 +652,21 @@ prompt_action() {
                     fi
                     _url="$(printf "%s" "$_pick" | cut -d',' -f1 | sed 's/^ *//;s/ *$//')"
                     _label="$(printf "%s" "$_pick" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
-                    _resolved=$(resolve_stream_url "$_url")
+                    # resolve, then probe with a 1-byte range request: the
+                    # workers resolver sometimes returns a stale signed URL
+                    # (403); retry to get a fresh signature before committing
+                    # to a multi-GB download
+                    _resolved=""
+                    _try=1
+                    while [ "$_try" -le 3 ]; do
+                        _resolved="$(resolve_stream_url "$_url")"
+                        if [ -n "$_resolved" ] && curl -sfL -r 0-0 -o /dev/null --max-time 30 "$_resolved" 2>/dev/null; then
+                            break
+                        fi
+                        _resolved=""
+                        _try=$(( _try + 1 ))
+                        [ "$_try" -le 3 ] && sleep 1
+                    done
                     if [ -z "$_resolved" ]; then
                         warn "Failed to resolve season $_sn URL."
                         return 1

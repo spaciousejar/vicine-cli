@@ -17,9 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Downloads fail loudly on HTTP errors (curl now uses `-f`, so a 403/404
-  error page is no longer saved and reported as success), partial files from
-  failed yt-dlp/ffmpeg attempts are cleaned up so retries aren't skipped, and
-  empty files don't count as already downloaded.
+  error page is no longer saved and reported as success), and interrupted
+  downloads can't masquerade as complete files: everything stages to
+  `<name>.part` and only an atomic rename publishes the final file. yt-dlp's
+  own staging is kept for resuming large archives (a 5.5 GiB season zip
+  interrupted at 2% previously left a "complete-looking" partial).
+- Whole-season ZIP downloads probe the resolved URL (1-byte range request)
+  and re-resolve up to 3 times: the workers resolver sometimes caches a
+  stale, already-expired signed URL (403 on `Dark.S03.720p.zip`), which is
+  now caught before a long doomed download instead of after it.
 
 ## [1.4.1] - 2026-09-20
 
