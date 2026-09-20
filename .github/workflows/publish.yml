@@ -38,7 +38,10 @@ jobs:
       - name: Print published package location
         run: |
           ver="$(node -p "require('./package.json').version")"
-          npm dist-tag add "vicine@${ver}" latest
+          # npm publish auto-tags a fresh version as 'latest'; the explicit
+          # dist-tag add needs write scope and can fail on publish-only tokens,
+          # so don't let it fail the job (the release step depends on it).
+          npm dist-tag add "vicine@${ver}" latest || echo "dist-tag add skipped (token scope)"
           echo "Published vicine@${ver}"
           echo "https://www.npmjs.com/package/vicine"
 
