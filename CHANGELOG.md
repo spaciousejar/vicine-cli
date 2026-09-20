@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a silent "command not found".
 - Anime quality labels fall back to the variant path when the master playlist
   omits `RESOLUTION`.
+- Anime: `-D -A` download-all is no longer short-circuited by the info-only
+  gate that `-D` sets internally (regression from the `-i` fix).
+- `select_item` treats invalid/empty API JSON as "no results" instead of
+  tripping an integer-comparison error.
+- Watch history dedup uses a fixed-string match — slugs containing `[` or
+  other regex characters no longer break the `grep` pattern.
+- Help text lists `2160p` in the quality choices alongside `4K`.
 
 ### Added
 

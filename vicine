@@ -86,7 +86,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
     ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}            Browse a collection
     ${C_CYAN}-S${C_RESET}, ${C_CYAN}--stats${C_RESET}             Show catalogue stats
-    ${C_CYAN}-q${C_RESET}, ${C_CYAN}--quality${C_RESET}           Select quality (best/480p/720p/1080p/4K)
+    ${C_CYAN}-q${C_RESET}, ${C_CYAN}--quality${C_RESET}           Select quality (best/480p/720p/1080p/2160p/4K)
     ${C_CYAN}-e${C_RESET}, ${C_CYAN}--episode${C_RESET}           Play episode N, N-M, or -1 (latest)
     ${C_CYAN}-n${C_RESET}, ${C_CYAN}--select-nth${C_RESET}        Select result by index N (non-interactive)
     ${C_CYAN}-c${C_RESET}, ${C_CYAN}--continue${C_RESET}          Continue from history
@@ -256,7 +256,10 @@ henc() {
 
 # Present items from JSON file via fzf/nth, write selected JSON to tmpfile2
 select_item() {
-    _count=$(jq 'length' "$tmpfile")
+    _count=$(jq 'length' "$tmpfile" 2>/dev/null)
+    case "${_count:-0}" in
+        ''|*[!0-9]*) return 1 ;;   # invalid JSON → no results
+    esac
     [ "$_count" -eq 0 ] && return 1
 
     if [ "$_count" -eq 1 ]; then
@@ -368,7 +371,9 @@ get_episode_name() {
 update_history() {
     _slug="$1"; _title="$2"; _type="$3"; _season="$4"; _ep="$5"
     [ -z "$_slug" ] && return
-    grep -v "^${_slug}	" "$histfile" 2>/dev/null > "$histfile.tmp" || true
+    # fixed-string match on the first field — slugs from the API may contain
+    # regex characters that would break grep's BRE
+    awk -F '\t' -v s="$_slug" '$1 != s' "$histfile" > "$histfile.tmp" 2>/dev/null || true
     printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$histfile.tmp"
     mv "$histfile.tmp" "$histfile"
 }
@@ -1010,7 +1015,7 @@ cmd_anime() {
     [ -z "$anime_ep_maps" ] && die "No episodes found."
     anime_ep_list="$(printf "%s" "$anime_ep_maps" | cut -f 2)"
 
-    if [ "$info_only" -eq 1 ]; then
+    if [ "$info_only" -eq 1 ] && [ "$download_all_mode" -eq 0 ]; then
         _total=$(printf "%s\n" "$anime_ep_list" | wc -l | tr -d ' ')
         printf "  %s\n  %s episodes\n" "$anime_title" "$_total"
         return 0
