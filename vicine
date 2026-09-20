@@ -622,7 +622,50 @@ prompt_action() {
         _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
         [ -z "$_season_text" ] && warn "No season data." && return 1
         _ep_list=$(parse_episodes "$_season_text" "$quality")
-        [ -z "$_ep_list" ] && warn "No episodes found." && return 1
+
+        # Whole-season dumps ("Season N : URL,Label,QUAL : URL2,..." in
+        # .season_zip) have no per-episode data — play the season file.
+        if [ -z "$_ep_list" ]; then
+            _zip="$(jq -r '.season_zip // empty' "$tmpfile2")"
+            if [ -n "$_zip" ]; then
+                _zip_line="$(printf "%s\n" "$_zip" | grep -E "^Season ${_sn} : " | head -n 1)"
+                if [ -n "$_zip_line" ]; then
+                    _variants="$(printf "%s" "$_zip_line" | sed 's/^Season [0-9]* : //; s/ : /\n/g')"
+                    if [ "$quality" != "best" ]; then
+                        _pick="$(printf "%s\n" "$_variants" | awk -F',' -v q="$quality" 'tolower($NF)==tolower(q){print; exit}')"
+                        [ -z "$_pick" ] && _pick="$(printf "%s\n" "$_variants" | tail -1)"
+                    else
+                        _pick="$(printf "%s\n" "$_variants" | tail -1)"
+                    fi
+                    _url="$(printf "%s" "$_pick" | cut -d',' -f1 | sed 's/^ *//;s/ *$//')"
+                    _label="$(printf "%s" "$_pick" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
+                    _resolved=$(resolve_stream_url "$_url")
+                    if [ -z "$_resolved" ]; then
+                        warn "Failed to resolve season $_sn URL."
+                        return 1
+                    fi
+                    info "Playing ${_title} :: ${_label}"
+                    case "$_resolved" in
+                        *.zip|*.zip?*)
+                            # whole-season archive (Vegamovies-style ZIP dump):
+                            # not streamable — download it instead
+                            info "Season $_sn is a ZIP archive — downloading instead of streaming."
+                            mkdir -p "$download_dir"
+                            do_download "$_resolved" "${_title}_S${_sn}_${_label}"
+                            update_history "$_slug" "$_title" series "$_sn" 0
+                            return 0
+                            ;;
+                    esac
+                    _skip_flags="$(skip_flags_for "$_title" 1)"
+                    play_url "$_resolved" "${_title} :: ${_label}" "" "$_skip_flags"
+                    [ "$exit_after_play" = 1 ] && exit $?
+                    update_history "$_slug" "$_title" series "$_sn" 0
+                    return 0
+                fi
+            fi
+            warn "No episodes found."
+            return 1
+        fi
 
         _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
 
