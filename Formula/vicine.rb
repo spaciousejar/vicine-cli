@@ -1,8 +1,8 @@
 class Vicine < Formula
   desc "Search, stream, and download movies, series and anime from the terminal"
   homepage "https://github.com/spaciousejar/vicine-cli"
-  url "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.4.2.tar.gz"
-  sha256 "a57c7065f938123e41a65593ba3c4a5909adbc506694df2b18701d4a1cb3f3d5"
+  url "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/vmaster.tar.gz"
+  sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   license "GPL-3.0-or-later"
 
   depends_on "fzf"
