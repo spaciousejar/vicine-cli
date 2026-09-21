@@ -476,16 +476,17 @@ do_download() {
     info "Downloading: $_dl_safe"
 
     # Stage to $_dl_file.part and rename on success, so an interrupted
-    # download can never leave a partial file that looks complete. yt-dlp's
-    # own .part staging is left in place on failure so it can resume.
+    # download can never leave a partial file that looks complete. yt-dlp does
+    # its own single-level .part staging + resume when given the final path.
     _pt="${_dl_file}.part"
     _yt="--no-warnings --quiet --progress"
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && { ok "Saved: $_dl_file" && return 0; }
         else
-            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && { ok "Saved: $_dl_file" && return 0; }
         fi
+        # non-interrupt failure: drop staging so a retry isn't poisoned
         rm -f "$_pt"
     fi
     # fallbacks don't resume — start clean
@@ -1432,8 +1433,21 @@ case "$search_mode" in
             exit 0
         fi
 
-        # Movies are downloaded with -d (single quality); -D covers whole series/anime only
-        die "-D downloads full series/anime only. Use -d to download a movie (single quality)."
+        # Movies: -D downloads the chosen-quality file (same pick as -d)
+        _title="$(jq -r '.title' "$tmpfile2" | hdec)"
+        _links=$(jq -r '.links // empty' "$tmpfile2")
+        [ -z "$_links" ] && die "No downloadable links for '$_title'."
+        _parsed="$(parse_links "$_links")"
+        _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
+        if [ "$quality" != "best" ]; then
+            _qm=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
+            [ -n "$_qm" ] && _best_url="$_qm"
+        fi
+        _mresolved=$(resolve_stream_url "$_best_url")
+        [ -z "$_mresolved" ] && die "Failed to resolve movie URL."
+        _msafe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        mkdir -p "$download_dir"
+        do_download "$_mresolved" "$_msafe"
         ;;
 esac
 

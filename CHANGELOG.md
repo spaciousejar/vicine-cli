@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `-D` now works on movies: it downloads the chosen-quality file (same
+  selection as `-d`) instead of erroring out.
+
+### Changed
+
+- Downloads stage with a single `.part` level: yt-dlp writes to the final
+  name and manages its own `.part` + resume, so interrupted runs resume
+  cleanly and never leave a double-suffixed artifact (the earlier
+  `-o name.part` + yt-dlp staging produced `name.part.part`). ffmpeg/curl
+  fallbacks still stage through `.part` + atomic rename.
+
 - Whole-season ZIP entries (`season_zip`): when a selected season has no
   per-episode data, vicine picks the quality variant, resolves the archive
   URL and downloads it (mpv can't stream zip containers). Verified live on
