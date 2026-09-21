@@ -29,7 +29,8 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           # manual dispatch from a branch: fall back to the latest tag
-          [ "$ver" = "$GITHUB_REF_NAME" ] && ver="$(git describe --tags --abbrev=0)"
+          [ "$ver" = "$GITHUB_REF_NAME" ] && ver="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          case "$ver" in *[!0-9.]*) echo "bad version: $ver" >&2; exit 1 ;; esac
           echo "ver=$ver" >> "$GITHUB_ENV"
 
       - name: Build source package
