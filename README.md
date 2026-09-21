@@ -156,7 +156,7 @@ vicine -i batman               # Show info only (no play)
 | `--exit-after-play` | Play then exit, return player exit code |
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |
-| `-D`, `--download-all` | Download full series or anime (all episodes) |
+| `-D`, `--download-all` | Download a movie, whole series, or anime — interactive quality/season pickers, parallel downloads (`VICINE_DL_JOBS`) |
 | `-p`, `--player` | Specify player (mpv, iina, vlc) |
 | `-V`, `-v`, `--version`, `--v` | Show version |
 | `-h`, `--help` | Show help |

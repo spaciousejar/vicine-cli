@@ -276,6 +276,15 @@ select_item() {
     esac
     [ "$_count" -eq 0 ] && return 1
 
+    # Non-interactive select-nth (e.g. -n 2) — validated before the
+    # single-result auto-pick so -n 9 with one result doesn't silently play it
+    if [ -n "$select_nth" ]; then
+        _idx="$select_nth"
+        [ "$_idx" -ge "$_count" ] 2>/dev/null && die "Selection ${_idx} out of range (0-$((_count - 1)))"
+        jq ".[${_idx}]" "$tmpfile" > "$tmpfile2"
+        return 0
+    fi
+
     if [ "$_count" -eq 1 ]; then
         jq '.[0]' "$tmpfile" > "$tmpfile2"
         return 0
@@ -283,14 +292,6 @@ select_item() {
 
     # Build display list (1-based, like the anime menu): "1  Title  [type]  (year)"
     jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" > "$tmpfile3"
-
-    # Non-interactive select-nth (e.g. -n 2)
-    if [ -n "$select_nth" ]; then
-        _idx="$select_nth"
-        [ "$_idx" -ge "$_count" ] 2>/dev/null && die "Selection ${_idx} out of range (0-$((_count - 1)))"
-        jq ".[${_idx}]" "$tmpfile" > "$tmpfile2"
-        return 0
-    fi
 
     _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 1
     [ -z "$_selection" ] && return 1
@@ -991,6 +992,33 @@ anime_cdn_curl() {
     $curl_exe -sL -A "$anime_agent" -e "$anime_embed_ref" --max-time 15 "$@"
 }
 
+# m3u8 variant parser: reads a master playlist on stdin, prints "RESp>URL"
+# lines (best first). Pure (sed/grep/sort/printf only) so it's testable —
+# factored out of anidb_m3u8.
+anime_variants() {
+    _md="${1:-}"
+    _res=""
+    while IFS= read -r _line; do
+        case "$_line" in
+            *RESOLUTION=*) _res="$(printf "%s" "$_line" | sed -nE 's|.*RESOLUTION=[0-9]+x([0-9]+).*|\1|p')" ;;
+        esac
+        case "$_line" in
+            *index.m3u8)
+                # fall back to the numeric dir when RESOLUTION is absent: relative
+                # paths ("1080/index.m3u8") and absolute URLs (…/1080/index.m3u8)
+                [ -z "$_res" ] && _res="$(printf '%s' "$_line" | sed -nE 's|^([0-9]+)/.*|\1|p')"
+                [ -z "$_res" ] && _res="$(printf '%s' "$_line" | sed -nE 's|.*/([0-9]+)/index\.m3u8$|\1|p')"
+                case "$_line" in
+                    http*) _url="$_line" ;;
+                    *)     _url="${_md}/$_line" ;;
+                esac
+                printf "%sp>%s\n" "$_res" "$_url"
+                # consumed — don't leak it into the next variant
+                _res="" ;;
+        esac
+    done | sort -rn
+}
+
 # extract m3u8 quality list ("RES>URL" lines, best first) for ep
 anidb_m3u8() {
     _ep_id=$(printf "%s" "$anime_ep_maps" | sed -nE "s|^([0-9]+)\t${1}$|\1|p")
@@ -1011,21 +1039,7 @@ anidb_m3u8() {
         printf "auto>%s\n" "$_master"
         return 0
     fi
-    printf "%s\n" "$_mp" | while IFS= read -r _line; do
-        case "$_line" in
-            *RESOLUTION=*) _res="$(printf "%s" "$_line" | sed -nE 's|.*RESOLUTION=[0-9]+x([0-9]+).*|\1|p')" ;;
-        esac
-        case "$_line" in
-            [0-9]*/index.m3u8)
-                # fall back to the variant's path prefix when RESOLUTION is absent
-                [ -z "$_res" ] && _res="$(printf '%s' "$_line" | sed -nE 's|^([0-9]+)/.*|\1|p')"
-                case "$_line" in
-                    http*) _url="$_line" ;;
-                    *)     _url="$_master_dir/$_line" ;;
-                esac
-                printf "%sp>%s\n" "$_res" "$_url" ;;
-        esac
-    done | sort -rn
+    printf "%s\n" "$_mp" | anime_variants "$_master_dir"
 }
 
 # pick quality variant → prints chosen m3u8 line to stdout (sets nothing)
@@ -1050,7 +1064,7 @@ anime_play_episode() {
     if [ "$download_all_mode" = 1 ]; then
         _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         _epnum=$(printf '%02d' "$_ep_no")
-        do_download "$_video_link" "${_safe}/season-1/Ep${_epnum}"
+        do_download "$_video_link" "${_safe}/season-1/Ep${_epnum}" "$anime_embed_ref"
         _rc=$?
         [ "$_rc" -ge 130 ] && return "$_rc"
         return 0
@@ -1200,9 +1214,12 @@ cmd_anime() {
             _rend=""
             _total=$(printf "%s\n" "$anime_ep_list" | wc -l | tr -d ' ')
         fi
-        printf "\n  ${C_YELLOW}Download ${_total} episode(s) of '${anime_title}'?${C_RESET} [y/N] "
-        read -r _yn
-        [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+        # only ask on a real terminal — piped/cron runs keep the old behavior
+        if [ -t 0 ]; then
+            printf "\n  ${C_YELLOW}Download ${_total} episode(s) of '${anime_title}'?${C_RESET} [y/N] "
+            read -r _yn
+            [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+        fi
         printf "%s\n" "$anime_ep_list" > "$tmpfile3"
         _jobs=0
         while IFS= read -r _ep; do
@@ -1213,7 +1230,8 @@ cmd_anime() {
             if [ "$dl_jobs" -gt 1 ]; then
                 ( anime_play_episode "$_ep" ) &
                 _jobs=$(( _jobs + 1 ))
-                [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
+                # dash's `wait` returns the last-finished job's status; ≥130 = interrupt
+                [ "$_jobs" -ge "$dl_jobs" ] && { wait; _rc=$?; _jobs=0; [ "$_rc" -ge 130 ] && exit "$_rc"; }
             else
                 anime_play_episode "$_ep"
                 _rc=$?
@@ -1221,6 +1239,8 @@ cmd_anime() {
             fi
         done < "$tmpfile3"
         wait
+        _rc=$?
+        [ "$_rc" -ge 130 ] && exit "$_rc"
         return
     fi
 
@@ -1309,7 +1329,7 @@ uninstall_self() {
     if rm -f "$_bin"; then
         ok "Uninstalled $_bin"
     else
-        die "Uninstalled: cannot remove $_bin — check permissions."
+        die "Uninstall failed: cannot remove $_bin — check permissions."
     fi
     if [ -d "$(dirname "$histfile")" ]; then
         warn "Watch history kept at $(dirname "$histfile") — remove manually if undesired"
@@ -1560,8 +1580,10 @@ case "$search_mode" in
             done
 
             printf "\n  ${C_YELLOW}Download ${_total} episodes of '${_title}' (${_nsel} season(s))?${C_RESET} [y/N] "
-            read -r _yn
-            [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+            if [ -t 0 ]; then
+                read -r _yn
+                [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+            fi
 
             _si=1
             while [ "$_si" -le "$_sc" ]; do
@@ -1587,7 +1609,7 @@ case "$search_mode" in
                               do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
                             ) &
                             _jobs=$(( _jobs + 1 ))
-                            [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
+                            [ "$_jobs" -ge "$dl_jobs" ] && { wait; _rc=$?; _jobs=0; [ "$_rc" -ge 130 ] && exit "$_rc"; }
                         else
                             _r="$(resolve_stream_url "$_url")"
                             if [ -z "$_r" ]; then
@@ -1600,6 +1622,8 @@ case "$search_mode" in
                         fi
                     done < "$tmpfile3"
                     wait
+                    _rc=$?
+                    [ "$_rc" -ge 130 ] && exit "$_rc"
                 fi
                 _si=$(( _si + 1 ))
             done

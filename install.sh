@@ -57,7 +57,8 @@ mkdir -p "$target"
 tmpfile="$(mktemp)"
 trap 'rm -f "$tmpfile"' EXIT
 
-curl -fsSL "$url" -o "$tmpfile"
+curl -fsSL "$url" -o "$tmpfile" || { echo "failed to download script" >&2; exit 1; }
+[ -s "$tmpfile" ] || { echo "downloaded script is empty — aborting" >&2; exit 1; }
 sh -n "$tmpfile" || { echo "downloaded script failed syntax check" >&2; exit 1; }
 install -m 755 "$tmpfile" "$target/vicine"
 

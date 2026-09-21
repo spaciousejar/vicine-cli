@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   download loops were moved off pipeline-subshells so their `wait` and
   counters work in the current shell; quality menus share one
   `pick_quality_menu` helper and selects read their list via stdin redirection.
+- Series episode URL resolution now runs inside the download workers too,
+  overlapping the running downloads instead of serializing behind each
+  batch's `wait` (resolution time is hidden behind the downloads).
+- yt-dlp downloads run with `--no-warnings --quiet --progress`: only the
+  progress bar and errors show — no more `[generic] Extracting URL / Falling
+  back…` chatter in `-d` and `-D` output.
 
 - Whole-season ZIP entries (`season_zip`): when a selected season has no
   per-episode data, vicine picks the quality variant, resolves the archive
@@ -55,6 +61,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an interrupted download (older versions wrote directly to the final name;
   a Ctrl-C at 0.5% on a 3.9 GB movie left a 21 MB "complete-looking" file
   that blocked re-downloads until deleted).
+- The `-D` confirm prompt shows the number of seasons actually selected, not
+  the series' total (picking one season no longer asks about all three).
+- `-D -A` anime downloads send the `Referer` header like every other anime
+  path does (`hls.1embed.buzz` is referer-gated) — previously the header was
+  dropped and downloads could 403 on the manifest.
+- Non-TTY `-D` runs no longer cancel at the confirm prompt: the y/N confirm
+  is only asked on a real terminal, so piped/scripted runs keep the old
+  auto-download behavior instead of silently doing nothing.
+- Anime m3u8 variants without a `RESOLUTION=` line are no longer labelled
+  with the previous variant's resolution (wrong `-q` match), and absolute
+  variant URLs are no longer dropped from the quality list (the
+  absolute-URL branch was previously unreachable). The variant parser was
+  factored into `anime_variants()` and is covered by
+  `tests/m3u8_variants.sh`.
+- Parallel `-D` batches propagate a worker exit code ≥ 130 (interrupt)
+  instead of continuing to spawn jobs.
+- `-n N` out-of-range selection is rejected even when the search returns a
+  single result (previously it silently played result 1).
+- The one-liner installer aborts when the download fails or comes back empty
+  (an empty file used to pass the syntax check and install a 0-byte
+  binary).
 - Whole-season ZIP downloads probe the resolved URL (1-byte range request),
   re-resolve up to 3 times, and fall back to the season's other quality
   variant (different workers URL, independent cache): a stale, expired signed
