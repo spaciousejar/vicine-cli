@@ -14,11 +14,11 @@
         in rec {
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "vicine";
-            version = "1.4.2";
+            version = "1.4.3";
 
             src = pkgs.fetchurl {
-              url = "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.4.2.tar.gz";
-              sha256 = "a57c7065f938123e41a65593ba3c4a5909adbc506694df2b18701d4a1cb3f3d5";
+              url = "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.4.3.tar.gz";
+              sha256 = "02e141b6360ad200abcdeef6f0de69889e518e2aabbf753d3f50af0f0c18480c";
             };
 
             dontBuild = true;
