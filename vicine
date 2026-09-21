@@ -1575,17 +1575,26 @@ case "$search_mode" in
                     _jobs=0
                     while IFS='	' read -r _num _url _qual _size; do
                         _enum=$(printf '%02d' "$_num")
-                        _resolved=$(resolve_stream_url "$_url")
-                        if [ -z "$_resolved" ]; then
-                            warn "Episode $_num (S${_si}) unavailable — skipped."
-                            continue
-                        fi
                         if [ "$dl_jobs" -gt 1 ]; then
-                            ( do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}" ) &
+                            # resolve + download in the worker so resolution
+                            # overlaps the running downloads instead of
+                            # serializing behind each batch's wait
+                            ( _r="$(resolve_stream_url "$_url")"
+                              if [ -z "$_r" ]; then
+                                  warn "Episode $_num (S${_si}) unavailable — skipped."
+                                  exit 0
+                              fi
+                              do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                            ) &
                             _jobs=$(( _jobs + 1 ))
                             [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
                         else
-                            do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                            _r="$(resolve_stream_url "$_url")"
+                            if [ -z "$_r" ]; then
+                                warn "Episode $_num (S${_si}) unavailable — skipped."
+                                continue
+                            fi
+                            do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
                             _rc=$?
                             [ "$_rc" -ge 130 ] && exit "$_rc"
                         fi
