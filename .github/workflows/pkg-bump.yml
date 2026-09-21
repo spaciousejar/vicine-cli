@@ -1,0 +1,36 @@
+name: Bump packaged versions
+
+# Homebrew (Formula/), Scoop (bucket/), and the Nix flake pin a release
+# tarball + checksum. This workflow rewrites those pins on every published
+# release so the OS packages don't go stale (like the AUR job does).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rewrite version and checksum pins
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          sha="$(curl -fsSL "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v${ver}.tar.gz" | sha256sum | cut -d' ' -f1)"
+          echo "pinning $ver ($sha)"
+
+          sed -i "s|refs/tags/v[0-9.]*\.tar\.gz|refs/tags/v${ver}.tar.gz|; s|sha256 \"[0-9a-f]*\"|sha256 \"$sha\"|" Formula/vicine.rb
+          sed -i "s|refs/tags/v[0-9.]*\.tar\.gz|refs/tags/v${ver}.tar.gz|; s|\"version\": \"[0-9.]*\"|\"version\": \"$ver\"|; s|\"hash\": \"[0-9a-f]*\"|\"hash\": \"$sha\"|" bucket/vicine.json
+          sed -i "s/version = \"[0-9.]*\"/version = \"$ver\"/; s|refs/tags/v[0-9.]*\.tar\.gz|refs/tags/v${ver}.tar.gz|; s|sha256 = \"[0-9a-f]*\"|sha256 = \"$sha\"|" flake.nix
+
+          grep -n "1.4\|$ver" Formula/vicine.rb bucket/vicine.json flake.nix | grep -E 'version|refs/tags|sha' || true
+
+      - name: Commit if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: bump packaged versions to ${{ github.ref_name }}"
+          file_pattern: Formula/vicine.rb bucket/vicine.json flake.nix

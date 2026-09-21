@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Contributor docs: contributing guidelines (CONTRIBUTING.md), a scraping
   hacking guide (hacking.md), a legal disclaimer (disclaimer.md), and
   GitHub issue templates (bug report / feature request).
+- Packaging for more OSes, all pinned to the release by
+  `.github/workflows/pkg-bump.yml`: Homebrew formula (macOS), Scoop
+  manifest (Windows), and a Nix flake.
 - AUR publishing is automated: publishing a GitHub Release bumps `pkgver`
   in `aur/PKGBUILD`, recomputes `sha256sums` and pushes to
   aur.archlinux.org (`.github/workflows/aur.yml`) — no manual AUR update.

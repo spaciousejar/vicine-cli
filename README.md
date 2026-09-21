@@ -35,19 +35,37 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 
 ## Installation
 
-### npm
+Packaged installs below, or run anywhere via the [one-liner
+installer](#one-liner-installer).
 
-Published automatically to npmjs on every new `v*` tag (see [Releasing](#releasing)).
+### macOS
 
-```sh
-npm install -g vicine
-```
+- **Homebrew** (tap provided by this repo):
+  ```sh
+  brew tap spaciousejar/vicine-cli
+  brew install vicine
+  ```
+  Installs `jq`, `fzf`, `mpv` as dependencies. Prefer IINA? `brew install
+  --cask iina` and set `VICINE_PLAYER=iina`.
+- **npm**: `npm install -g vicine`
 
-### AUR (Arch Linux)
+### Windows
 
-```sh
-yay -S vicine
-```
+- **Scoop** (between Git Bash; start vicine from a Git Bash terminal);
+  deps: `scoop install git jq fzf mpv` (+ `yt-dlp` for downloads):
+  ```sh
+  scoop bucket add vicine-cli https://github.com/spaciousejar/vicine-cli
+  scoop install vicine-cli/vicine
+  ```
+- **WSL**: follow the Linux steps below.
+
+### Linux
+
+- **AUR (Arch)**: `yay -S vicine`
+- **Nix**: `nix profile install github:spaciousejar/vicine-cli`
+- **npm**: `npm install -g vicine`
+- **One-liner installer**
+- **Manual (git)**
 
 ### One-liner installer
 
@@ -79,12 +97,16 @@ sudo cp vicine /usr/local/bin/vicine
 
 - Installed via npm: `npm update -g vicine`
 - Installed via AUR: `yay -S vicine` (or a regular `pacman -Syu` once installed)
+- Installed via Homebrew: `brew upgrade vicine`
+- Installed via Nix: `nix profile upgrade github:spaciousejar/vicine-cli`
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
 
 ### Uninstalling
 
 - Installed via npm: `npm uninstall -g vicine`
 - Installed via AUR: `sudo pacman -R vicine`
+- Installed via Homebrew: `brew uninstall vicine && brew untap spaciousejar/vicine-cli`
+- Installed via Nix: `nix profile remove vicine`
 - Installed via script/git — the script removes itself:
 
   ```sh
@@ -110,6 +132,16 @@ git push origin v1.3.0
 2. creates a GitHub Release with notes generated from the commits since the previous tag (skipped if the release already exists)
 
 Publishing the release triggers [`.github/workflows/aur.yml`](.github/workflows/aur.yml), which bumps `pkgver`, recomputes the checksum, and pushes the AUR package (`aur/PKGBUILD`). It needs the `AUR_SSH_PRIVATE_KEY` repo secret (the SSH key registered at aur.archlinux.org).
+
+[`.github/workflows/pkg-bump.yml`](.github/workflows/pkg-bump.yml) keeps the
+repo-hosted packages current: on every release it rewrites the version and
+checksum pins in the Homebrew formula (`Formula/vicine.rb`), the Scoop
+manifest (`bucket/vicine.json`), and the Nix flake (`flake.nix`).
+
+> Debian/Ubuntu (PPA), Fedora/COPR, and openSUSE (OBS) packages aren't
+> hosted yet — they need accounts on launchpad.net / copr.fedorainfracloud.org
+> / build.opensuse.org respectively. Solved, vicine is a single script that
+> also installs via npm, the one-liner, or git on those distros.
 
 ## Dependencies
 
