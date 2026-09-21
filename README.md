@@ -46,19 +46,22 @@ installer](#one-liner-installer).
   brew trust spaciousejar/vicine-cli   # required by Homebrew 6.0+ tap-trust
   brew install vicine
   ```
-  Installs `jq`, `fzf`, and the IINA app (vicine's default player on macOS).
-  Skip IINA with `brew install vicine --without-iina` (then use VLC via
-  `-p vlc`, or install mpv yourself).
+  Installs `jq`, `fzf`, and the IINA app (vicine's default player on
+  macOS); brew skips IINA automatically when it's already installed. Use
+  `-p vlc` or `brew install mpv` if you don't want IINA.
 - **npm**: `npm install -g vicine`
 
 ### Windows
 
-- **Scoop** (between Git Bash; start vicine from a Git Bash terminal);
-  deps: `scoop install git jq fzf mpv` (+ `yt-dlp` for downloads):
+- **Scoop** — the `vicine` command wraps the Git Bash `bash.exe` that ships
+  with the `git` dependency, so no extra WSL/terminal setup is needed:
   ```sh
+  scoop bucket add extras          # mpv and friends live here
   scoop bucket add vicine-cli https://github.com/spaciousejar/vicine-cli
   scoop install vicine-cli/vicine
   ```
+  Add a player (`scoop install extras/mpv`, IINA, or VLC) — vicine has no
+  bundled player on Windows; `yt-dlp` from `extras` enables downloads.
 - **WSL**: follow the Linux steps below.
 
 ### Linux

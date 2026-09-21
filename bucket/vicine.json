@@ -6,13 +6,13 @@
     "depends": [
         "git",
         "jq",
-        "fzf",
-        "mpv"
+        "fzf"
     ],
     "url": "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.4.3.tar.gz",
     "hash": "02e141b6360ad200abcdeef6f0de69889e518e2aabbf753d3f50af0f0c18480c",
+    "extract_dir": "vicine-cli-$version",
     "installer": {
-        "script": "@('@echo off', 'bash \"$dir\\vicine\" %*') -join \"`r`n\" | Set-Content -Encoding Ascii -Path \"$dir\\vicine.cmd\""
+        "script": "$bash = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\\bash.exe'; Set-Content -Path \"$dir\\vicine.cmd\" -Value \"@echo off`r`n@`\"$bash`\" `\"$dir\\vicine`\" %*\" -Encoding Ascii"
     },
     "bin": [
         "vicine.cmd"

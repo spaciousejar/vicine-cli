@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listed one.
 - Scoop manifest shims `vicine` through a Git-Bash wrapper (the raw POSIX
   script can't be executed directly by a scoop shim).
+- Homebrew: IINA is a proper `cask` dependency again (the previous
+  `[:cask, :recommended]` tag combo was invalid and broke dependency
+  resolution); brew skips it when IINA is already installed.
+- Scoop: manifest no longer hard-depends on `mpv` (it's in the `extras`
+  bucket, not `main`), sets `extract_dir`, and the wrapper resolves the
+  real Git Bash path (previously it wrote a literal `$dir` and called the
+  WSL `bash` stub).
 
 ## [1.4.3] - 2026-09-21
 
