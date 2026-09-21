@@ -1464,6 +1464,11 @@ case "$search_mode" in
                 fi
             fi
             _season_selected() { [ -z "$_sel_seasons" ] && return 0; printf '%s\n' "$_sel_seasons" | grep -qx "$1"; }
+            if [ -n "$_sel_seasons" ]; then
+                _nsel=$(printf '%s\n' "$_sel_seasons" | wc -l | tr -d ' ')
+            else
+                _nsel="$_sc"
+            fi
 
             # Count episodes across all selected seasons using the same parser we download from
             _total=0
@@ -1478,7 +1483,7 @@ case "$search_mode" in
                 _si=$(( _si + 1 ))
             done
 
-            printf "\n  ${C_YELLOW}Download ${_total} episodes of '${_title}' (${_sc} season(s))?${C_RESET} [y/N] "
+            printf "\n  ${C_YELLOW}Download ${_total} episodes of '${_title}' (${_nsel} season(s))?${C_RESET} [y/N] "
             read -r _yn
             [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
 
