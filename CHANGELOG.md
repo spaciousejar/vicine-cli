@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `-D` on a movie downloads the chosen-quality file (same selection as `-d`).
-- Interactive `-D` (series): before the confirm, you're prompted to pick a
-  quality and select which seasons to download (multi-select; empty = all).
-  Non-TTY runs keep the old all-seasons, `-q`-driven behavior.
+- Interactive `-D`: the download picker now covers all three:
+  - Series: quality menu + multi-select seasons.
+  - Anime: quality menu + an episode-range prompt (e.g. `1-50`, empty = all).
+  - Movies: quality menu.
+  Non-TTY runs keep the old `-q`/all-seasons behavior.
 
 ### Changed
 

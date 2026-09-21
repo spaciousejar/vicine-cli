@@ -1121,13 +1121,35 @@ cmd_anime() {
         return 0
     fi
 
-    # Download-all mode: confirm once, then download every episode
+    # Download-all mode: interactive quality + episode-range pick, then confirm
     if [ "$download_all_mode" = 1 ]; then
-        _total=$(printf "%s\n" "$anime_ep_list" | wc -l | tr -d ' ')
-        printf "\n  ${C_YELLOW}Download ${_total} episodes of '${anime_title}'?${C_RESET} [y/N] "
+        _dl_range=""
+        if [ -t 0 ]; then
+            case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
+            _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality to download: " || true)
+            [ -n "$_new_q" ] && quality="$_new_q"
+            printf "\n  Episode range to download (e.g. 1-50, empty = all): "
+            read -r _dl_range
+        fi
+        if [ -n "$_dl_range" ]; then
+            _rstart=$(printf "%s" "$_dl_range" | grep -oE '^[0-9]+' | head -1)
+            _rend=$(printf "%s" "$_dl_range" | grep -oE '[0-9]+$' | tail -1)
+            [ -n "$_rstart" ] || die "Invalid episode range: $_dl_range"
+            [ -n "$_rend" ] || die "Invalid episode range: $_dl_range"
+            _total=$(printf "%s\n" "$anime_ep_list" | awk -v s="$_rstart" -v e="$_rend" '$1>=s && $1<=e' | wc -l | tr -d ' ')
+        else
+            _rstart=""
+            _rend=""
+            _total=$(printf "%s\n" "$anime_ep_list" | wc -l | tr -d ' ')
+        fi
+        printf "\n  ${C_YELLOW}Download ${_total} episode(s) of '${anime_title}'?${C_RESET} [y/N] "
         read -r _yn
         [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
         printf "%s\n" "$anime_ep_list" | while IFS= read -r _ep; do
+            if [ -n "$_rstart" ]; then
+                [ "$_ep" -ge "$_rstart" ] 2>/dev/null || continue
+                [ "$_ep" -le "$_rend" ] 2>/dev/null || continue
+            fi
             anime_play_episode "$_ep"
         done
         return
@@ -1476,6 +1498,11 @@ case "$search_mode" in
 
         # Movies: -D downloads the chosen-quality file (same pick as -d)
         _title="$(jq -r '.title' "$tmpfile2" | hdec)"
+        if [ -t 0 ]; then
+            case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
+            _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality to download: " || true)
+            [ -n "$_new_q" ] && quality="$_new_q"
+        fi
         _links=$(jq -r '.links // empty' "$tmpfile2")
         [ -z "$_links" ] && die "No downloadable links for '$_title'."
         _parsed="$(parse_links "$_links")"
