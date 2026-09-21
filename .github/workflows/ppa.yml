@@ -48,7 +48,7 @@ jobs:
           chmod +x "vicine-${ver}/vicine"
           cd "vicine-${ver}"
           dch --create -v "$ver-1" --package vicine -D unstable --force-distribution "Release $ver"
-          dpkg-buildpackage -S -sa
+          dpkg-buildpackage -S -sa -d
 
       - name: Import GPG key and sign
         env:
