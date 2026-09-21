@@ -46,8 +46,9 @@ installer](#one-liner-installer).
   brew trust spaciousejar/vicine-cli   # required by Homebrew 6.0+ tap-trust
   brew install vicine
   ```
-  Installs `jq`, `fzf`, `mpv` as dependencies. Prefer IINA? `brew install
-  --cask iina` and set `VICINE_PLAYER=iina`.
+  Installs `jq`, `fzf`, and `mpv` (the fallback player). Prefer IINA? `brew
+  install --cask iina` and set `VICINE_PLAYER=iina` — or skip mpv entirely
+  with `brew install vicine --without-mpv`.
 - **npm**: `npm install -g vicine`
 
 ### Windows
