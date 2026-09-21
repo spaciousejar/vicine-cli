@@ -2,11 +2,23 @@
 
 [![npm version](https://img.shields.io/npm/v/vicine?logo=npm)](https://www.npmjs.com/package/vicine)
 [![npm downloads](https://img.shields.io/npm/dt/vicine)](https://www.npmjs.com/package/vicine)
+[![AUR version](https://img.shields.io/aur/version/vicine)](https://aur.archlinux.org/packages/vicine)
 [![License](https://img.shields.io/npm/l/vicine)](https://github.com/spaciousejar/vicine-cli/blob/master/LICENSE)
 
 A POSIX shell script to search, stream, and download movies, series and anime from the terminal.
 
 See the [CHANGELOG](CHANGELOG.md) for release history.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Releasing](#releasing)
+- [Dependencies](#dependencies)
+- [Usage](#usage)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
@@ -66,6 +78,7 @@ sudo cp vicine /usr/local/bin/vicine
 ### Updating
 
 - Installed via npm: `npm update -g vicine`
+- Installed via AUR: `yay -S vicine` (or a regular `pacman -Syu` once installed)
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
 
 ### Uninstalling
@@ -85,7 +98,8 @@ sudo cp vicine /usr/local/bin/vicine
 Releases are fully automated — one tag push is enough:
 
 ```sh
-# bump the version in `vicine` (version_number) and `package.json`, commit, then:
+# bump the version in `vicine` (version_number), `package.json`, and the
+# CHANGELOG (move [Unreleased] to a dated release section); commit, then:
 git tag -a v1.3.0 -m "v1.3.0"
 git push origin v1.3.0
 ```
@@ -136,6 +150,10 @@ vicine -D -A "one piece"       # Download every episode of an anime
 vicine -i batman               # Show info only (no play)
 ```
 
+`-D` downloads land in `~/Movies/<Title>/season-N/` (override with
+`VICINE_DOWNLOAD_DIR`), several episodes in parallel (`VICINE_DL_JOBS`,
+default 2). Movies keep the flat layout.
+
 ### Options
 
 | Flag | Description |
@@ -168,6 +186,31 @@ vicine -i batman               # Show info only (no play)
 | `--download-dir` | Set download directory |
 | `--page N` | Browse page number (default 1) |
 | `--limit N` | Items per browse page (default 1000) |
+
+## FAQ
+
+- **How do I choose the quality?** `-q`/`--quality` (`best`, `480p`, `720p`,
+  `1080p`, `2160p`; `4K` is accepted as an alias).
+- **Where do downloads go?** `~/Movies/<Title>/season-N/` by default; set
+  `VICINE_DOWNLOAD_DIR` to change it. Movies keep the flat layout.
+- **Can I watch dubbed anime?** Yes — `--dub` (default is subtitled).
+- **Can I use VLC or IINA instead of mpv?** Yes — `-p vlc` / `-p iina`, or
+  set `VICINE_PLAYER`.
+- **How do I download a whole series or anime?** `-D` downloads every
+  episode (movies, series and anime); anime prompts for an episode range
+  (e.g. `1-50`), series for the seasons. Non-TTY runs download everything at
+  the chosen quality.
+- **A title shows "No sources found"** — that server is MegaPlay-based and
+  can't be resolved by the script; see the note under
+  [Features](#features).
+- **How do I update?** `npm update -g vicine`, `yay -S vicine`, or `vicine
+  -U` for script installs. If something breaks, update first — stale
+  versions hit retired provider endpoints.
+
+## Contributing
+
+See [CONTRIBUTING](CONTRIBUTING.md) for guidelines, [hacking](hacking.md)
+for how the scraping works, and the [legal disclaimer](disclaimer.md).
 
 ## License
 
