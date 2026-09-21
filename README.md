@@ -139,7 +139,7 @@ checksum pins in the Homebrew formula (`Formula/vicine.rb`), the Scoop
 manifest (`bucket/vicine.json`), and the Nix flake (`flake.nix`).
 
 > Debian/Ubuntu (PPA): `.github/workflows/ppa.yml` builds and uploads a
-> source package to `ppa:spaciousejar/ppa` on launchpad.net (needs the
+> source package to `ppa:spaciousejar/vicine` on launchpad.net (needs the
 > `PPA_GPG_PRIVATE_KEY` / `PPA_SSH_PRIVATE_KEY` secrets, already set).
 > Fedora/COPR and openSUSE/OBS aren't hosted yet —
 > they need accounts on copr.fedorainfracloud.org / build.opensuse.org.

@@ -1,7 +1,7 @@
 name: Publish to Launchpad PPA
 
 # Builds a source package for the release and uploads it to the
-# spaciousejar/ppa archive on Launchpad. Skipped (no-op) until the two
+# spaciousejar/vicine archive on Launchpad. Skipped (no-op) until the two
 # secrets exist:
 #   PPA_GPG_PRIVATE_KEY  - armored secret key used to sign the .changes
 #   PPA_SSH_PRIVATE_KEY  - SSH key registered on the Launchpad account
@@ -59,4 +59,4 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/lp
           chmod 600 ~/.ssh/lp
           ssh-keyscan ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
-          dput ppa:${LP_USER}/ppa "$RUNNER_TEMP/pkg"/*_source.changes
+          dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg"/*_source.changes
