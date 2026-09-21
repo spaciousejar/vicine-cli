@@ -1,8 +1,10 @@
 name: Publish to AUR
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
   aur:
@@ -12,10 +14,16 @@ jobs:
 
       # Derive pkgver from the release tag (v1.4.2 → 1.4.2); updpkgsums
       # recomputes sha256sums inside the action for the new tarball.
+      - name: Resolve version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          [ "$ver" = "$GITHUB_REF_NAME" ] && ver="$(git describe --tags --abbrev=0)"
+          echo "ver=$ver" >> "$GITHUB_ENV"
+
       - name: Bump pkgver from the release tag
         run: |
           cp aur/PKGBUILD ./PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${GITHUB_REF_NAME#v}/" ./PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${ver}/" ./PKGBUILD
 
       - name: Publish AUR package
         uses: KSXGitHub/github-actions-deploy-aur@v4.2.0

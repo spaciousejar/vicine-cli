@@ -1,33 +1,40 @@
 name: Publish to Launchpad PPA
 
-# Builds a source package for the release and uploads it to the
-# spaciousejar/vicine archive on Launchpad. Skipped (no-op) until the two
-# secrets exist:
-#   PPA_GPG_PRIVATE_KEY  - armored secret key used to sign the .changes
-#   PPA_SSH_PRIVATE_KEY  - SSH key registered on the Launchpad account
-# The GPG public key must be uploaded+confirmed on Launchpad, and the
+# Builds a source package for the release tag and uploads it to the
+# spaciousejar/vicine archive on Launchpad.
+#   Triggers: push of a v* tag, or manual dispatch (uses the latest tag).
+#   Secrets:  PPA_GPG_PRIVATE_KEY (signs the .changes),
+#             PPA_SSH_PRIVATE_KEY  (registered on the Launchpad account)
+# The GPG public key must be uploaded + confirmed on Launchpad and the
 # DEBEMAIL address must be a confirmed email on the account.
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
   ppa:
     runs-on: ubuntu-latest
-    if: ${{ secrets.PPA_GPG_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y devscripts debhelper dpkg-dev dput
 
+      - name: Resolve version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          # manual dispatch from a branch: fall back to the latest tag
+          [ "$ver" = "$GITHUB_REF_NAME" ] && ver="$(git describe --tags --abbrev=0)"
+          echo "ver=$ver" >> "$GITHUB_ENV"
+
       - name: Build source package
         env:
           DEBFULLNAME: vicky jadhav
           DEBEMAIL: thedarkspacian@proton.me
         run: |
-          ver="${GITHUB_REF_NAME#v}"
           wd="$RUNNER_TEMP/pkg"
           mkdir -p "$wd"
           curl -fsSL "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v${ver}.tar.gz" \

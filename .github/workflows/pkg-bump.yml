@@ -5,8 +5,10 @@ name: Bump packaged versions
 # release so the OS packages don't go stale (like the AUR job does).
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -16,6 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          [ "$ver" = "$GITHUB_REF_NAME" ] && ver="$(git describe --tags --abbrev=0)"
+          echo "ver=$ver" >> "$GITHUB_ENV"
 
       - name: Rewrite version and checksum pins
         run: |
