@@ -485,8 +485,14 @@ do_download() {
     _name="$2"
     _ref="$3"
     [ -z "$_url" ] && die "No URL to download"
-    _dl_safe="$(printf "%s" "$_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
-    _dl_file="${download_dir}/${_dl_safe}.mp4"
+    # allow relative subpaths in the name ("Title/season-1/S1E01") — kept for
+    # -D organization; the full relational path is created under download_dir
+    _dl_dir="$(dirname "$_name")"
+    _dl_name="$(basename "$_name")"
+    [ -z "$_dl_dir" ] || [ "$_dl_dir" = "." ] && _dl_dir=""
+    _dl_safe="$(printf "%s" "$_dl_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+    _dl_file="${download_dir}${_dl_dir:+/${_dl_dir}}/${_dl_safe}.mp4"
+    mkdir -p "$(dirname "$_dl_file")" 2>/dev/null
 
     [ -s "$_dl_file" ] && { warn "Already exists: $_dl_file (delete it if a previous download was interrupted)"; return 0; }
 
@@ -708,8 +714,9 @@ prompt_action() {
                             # whole-season archive (Vegamovies-style ZIP dump):
                             # not streamable — download it instead
                             info "Season $_sn is a ZIP archive — downloading instead of streaming."
+                            _zspec="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
                             mkdir -p "$download_dir"
-                            do_download "$_resolved" "${_title}_S${_sn}_${_label}"
+                            do_download "$_resolved" "${_zspec}/season-${_sn}/${_label}"
                             update_history "$_slug" "$_title" series "$_sn" 0
                             return 0
                             ;;
@@ -1002,7 +1009,7 @@ anime_play_episode() {
     if [ "$download_all_mode" = 1 ]; then
         _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         _epnum=$(printf '%02d' "$_ep_no")
-        do_download "$_video_link" "${_safe}_Ep${_epnum}" "$anime_embed_ref"
+        do_download "$_video_link" "${_safe}/season-1/Ep${_epnum}" "$anime_embed_ref"
     else
         info "Playing ep ${_ep_no}: ${anime_title}"
         play_url "$_video_link" "$anime_title - Episode $_ep_no" "$anime_embed_ref"
@@ -1488,7 +1495,7 @@ case "$search_mode" in
                             warn "Episode $_num (S${_si}) unavailable — skipped."
                             continue
                         fi
-                        do_download "$_resolved" "${_safe}_S${_si}E${_enum}"
+                        do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}"
                     done
                 fi
                 _si=$(( _si + 1 ))

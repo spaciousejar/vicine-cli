@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through, `-D` skips them with "unavailable — skipped", and downloads are
   rejected when the fetched content is an HTML/XML page — no more 3 KB
   "mp4" files that pretend to be episodes.
+- `-D` downloads are now organized into `download_dir/<Title>/season-N/`
+  (series get their real seasons, anime land in `season-1` since hianime
+  serves anime as one flat episode block, archives go under their season).
+  Movies keep the flat layout.
 - Downloads stage with a single `.part` level (yt-dlp writes to the final
   name, manages its own staging + resume; ffmpeg/curl stage through `.part`
   + atomic rename).
