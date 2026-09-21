@@ -1003,7 +1003,9 @@ anime_variants() {
             *RESOLUTION=*) _res="$(printf "%s" "$_line" | sed -nE 's|.*RESOLUTION=[0-9]+x([0-9]+).*|\1|p')" ;;
         esac
         case "$_line" in
-            *index.m3u8)
+            # anchored so #EXT-X-I-FRAME-STREAM-INF lines (--URI=NNN/index.m3u8)
+            # can't leak in, while absolute variant URLs still match
+            [0-9]*/index.m3u8|http*index.m3u8)
                 # fall back to the numeric dir when RESOLUTION is absent: relative
                 # paths ("1080/index.m3u8") and absolute URLs (…/1080/index.m3u8)
                 [ -z "$_res" ] && _res="$(printf '%s' "$_line" | sed -nE 's|^([0-9]+)/.*|\1|p')"

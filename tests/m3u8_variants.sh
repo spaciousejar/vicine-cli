@@ -36,4 +36,12 @@ out2="$(printf '%s\n' \
 https://cdn.example/video/720/index.m3u8' | anime_variants dir)"
 printf '%s\n' "$out2" | grep -q '^720p>https://cdn.example/video/720/index' || _fail 'absolute URL not preserved'
 
-echo "PASS (3 checks)"
+# 4. EXT-X-I-FRAME lines (with an unquoted URI ending in index.m3u8) must
+#    NOT be emitted as variants — regression guard.
+out3="$(printf '%s\n' \
+'#EXT-X-STREAM-INF:BANDWIDTH=500,RESOLUTION=1280x720
+720/index.m3u8
+#EXT-X-I-FRAME-STREAM-INF:RESOLUTION=1920x1080,URI=1080/index.m3u8' | anime_variants dir)"
+[ "$(printf '%s\n' "$out3" | grep -c 'EXT-X-I-FRAME')" = 0 ] || _fail 'EXT-X-I-FRAME line leaked in as a variant'
+
+echo "PASS (4 checks)"
