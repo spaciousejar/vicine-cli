@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Ctrl-C during a download now actually stops everything: an interrupted
+  download tool (yt-dlp/ffmpeg/curl exit ≥ 130) no longer falls through to
+  the next fallback downloader or on to the next episode — do_download
+  returns the interrupt code, the `-D` loops exit with 130, "Interrupted." is
+  printed, and partial files are cleaned.
 - The "Already exists" fast-path now hints that the file may be a partial from
   an interrupted download (older versions wrote directly to the final name;
   a Ctrl-C at 0.5% on a 3.9 GB movie left a 21 MB "complete-looking" file

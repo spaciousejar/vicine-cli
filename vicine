@@ -160,6 +160,7 @@ cleanup() {
 
 on_sigint() {
     _exit_code=130
+    warn "Interrupted."
     cleanup
 }
 
@@ -512,29 +513,60 @@ do_download() {
     _yt="--no-warnings --quiet --progress"
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && _stage_ok "$_dl_file" && { ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+            _rc=$?
         else
-            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && _stage_ok "$_dl_file" && { ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+            _rc=$?
         fi
-        # non-interrupt failure: drop staging so a retry isn't poisoned
+        # user interrupt (Ctrl-C): stop here — no ffmpeg/curl re-download
+        if [ "$_rc" -ge 130 ]; then
+            warn "Interrupted."
+            rm -f "$_dl_file"
+            return "$_rc"
+        fi
+        if [ "$_rc" -eq 0 ] && _stage_ok "$_dl_file"; then
+            ok "Saved: $_dl_file"
+            return 0
+        fi
         rm -f "$_dl_file"
     fi
     # fallbacks don't resume — start clean
     rm -f "$_pt" "$_pt.part"
     if command -v ffmpeg >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null
+            _rc=$?
         else
-            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null
+            _rc=$?
+        fi
+        if [ "$_rc" -ge 130 ]; then
+            warn "Interrupted."
+            rm -f "$_pt"
+            return "$_rc"
+        fi
+        if [ "$_rc" -eq 0 ] && _stage_ok "$_pt"; then
+            mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0
         fi
         rm -f "$_pt"
     fi
     # curl: -f makes HTTP errors (403/404) fail instead of saving the error
     # body and claiming success
     if [ -n "$_ref" ]; then
-        curl -fL -e "$_ref" --progress-bar -o "$_pt" "$_url" && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+        curl -fL -e "$_ref" --progress-bar -o "$_pt" "$_url"
+        _rc=$?
     else
-        curl -fL --progress-bar -o "$_pt" "$_url" && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+        curl -fL --progress-bar -o "$_pt" "$_url"
+        _rc=$?
+    fi
+    if [ "$_rc" -ge 130 ]; then
+        warn "Interrupted."
+        rm -f "$_pt"
+        return "$_rc"
+    fi
+    if [ "$_rc" -eq 0 ] && _stage_ok "$_pt"; then
+        mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0
     fi
     rm -f "$_pt"
     warn "Download failed: $_url"
@@ -1016,7 +1048,10 @@ anime_play_episode() {
     if [ "$download_all_mode" = 1 ]; then
         _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         _epnum=$(printf '%02d' "$_ep_no")
-        do_download "$_video_link" "${_safe}/season-1/Ep${_epnum}" "$anime_embed_ref"
+        do_download "$_video_link" "${_safe}/season-1/Ep${_epnum}"
+        _rc=$?
+        [ "$_rc" -ge 130 ] && return "$_rc"
+        return 0
     else
         info "Playing ep ${_ep_no}: ${anime_title}"
         play_url "$_video_link" "$anime_title - Episode $_ep_no" "$anime_embed_ref"
@@ -1179,6 +1214,8 @@ cmd_anime() {
                 [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
             else
                 anime_play_episode "$_ep"
+                _rc=$?
+                [ "$_rc" -ge 130 ] && exit "$_rc"
             fi
         done < "$tmpfile3"
         wait
@@ -1547,6 +1584,8 @@ case "$search_mode" in
                             [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
                         else
                             do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                            _rc=$?
+                            [ "$_rc" -ge 130 ] && exit "$_rc"
                         fi
                     done < "$tmpfile3"
                     wait
