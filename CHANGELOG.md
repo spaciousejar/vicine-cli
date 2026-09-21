@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Movies: quality menu.
   Non-TTY runs keep the old `-q`/all-seasons behavior.
 
+- Whole-season ZIP entries (`season_zip`): when a selected season has no
+  per-episode data, vicine picks the quality variant, resolves the archive
+  URL and downloads it (mpv can't stream zip containers). Verified live on
+  the "Dark Netflix" entry.
+
 ### Changed
 
 - Dead episode links are now handled honestly: URLs with an empty
@@ -30,11 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Downloads stage with a single `.part` level (yt-dlp writes to the final
   name, manages its own staging + resume; ffmpeg/curl stage through `.part`
   + atomic rename).
-
-- Whole-season ZIP entries (`season_zip`): when a selected season has no
-  per-episode data, vicine picks the quality variant, resolves the archive
-  URL and downloads it (mpv can't stream zip containers). Verified live on
-  the "Dark Netflix" entry.
 
 ### Fixed
 
