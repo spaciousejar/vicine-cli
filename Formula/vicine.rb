@@ -7,9 +7,9 @@ class Vicine < Formula
 
   depends_on "fzf"
   depends_on "jq"
-  # vicine's default player on macOS is IINA; mpv is the fallback.
-  # Skip the heavy mpv tree (ffmpeg, llvm, ...) with: brew install vicine --without-mpv
-  depends_on "mpv" => :recommended
+  # macOS default player is IINA (vicine prefers it over mpv). Skip the app
+  # with: brew install vicine --without-iina  (then use e.g. VLC / -p vlc).
+  depends_on "iina" => [:cask, :recommended]
 
   def install
     bin.install "vicine"
