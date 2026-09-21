@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Anime: quality menu + an episode-range prompt (e.g. `1-50`, empty = all).
   - Movies: quality menu.
   Non-TTY runs keep the old `-q`/all-seasons behavior.
+- The `-D` quality selectors list only the qualities that are actually
+  available for the item (union of episode/link variants), falling back to
+  the standard list when they can't be determined.
 
 - Whole-season ZIP entries (`season_zip`): when a selected season has no
   per-episode data, vicine picks the quality variant, resolves the archive

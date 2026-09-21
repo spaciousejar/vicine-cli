@@ -1133,7 +1133,14 @@ cmd_anime() {
         _dl_range=""
         if [ -t 0 ]; then
             case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
-            _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality to download: " || true)
+            # representative qualities from the first episode's master playlist
+            _ql=""
+            if [ -n "$anime_ep_list" ]; then
+                _qlinks="$(anidb_m3u8 "$(printf '%s\n' "$anime_ep_list" | head -1)" 2>/dev/null)"
+                _ql="$(printf '%s\n' "$_qlinks" | sed -nE 's/^([0-9]+p)>.*/\1/p' | sort -u)"
+            fi
+            [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
+            _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
             [ -n "$_new_q" ] && quality="$_new_q"
             printf "\n  Episode range to download (e.g. 1-50, empty = all): "
             read -r _dl_range
@@ -1448,7 +1455,20 @@ case "$search_mode" in
             # Interactive: let the user pick the quality and seasons first
             if [ -t 0 ]; then
                 case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality to download: " || true)
+                # only list qualities that actually appear in the seasons
+                _ql=""
+                _qi=1
+                while [ "$_qi" -le "$_sc" ]; do
+                    _qt=$(jq -r ".season_${_qi} // empty" "$tmpfile2")
+                    if [ -n "$_qt" ]; then
+                        _qq="$(printf "%s\n" "$_qt" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p')"
+                        _ql="$(printf '%s\n%s\n' "$_ql" "$_qq")"
+                    fi
+                    _qi=$(( _qi + 1 ))
+                done
+                _ql="$(printf '%s\n' "$_ql" | grep -oE '[0-9]+p' | sort -u)"
+                [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
+                _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
                 [ -n "$_new_q" ] && quality="$_new_q"
                 printf "" > "$tmpfile3"
                 _si=1
@@ -1510,14 +1530,16 @@ case "$search_mode" in
 
         # Movies: -D downloads the chosen-quality file (same pick as -d)
         _title="$(jq -r '.title' "$tmpfile2" | hdec)"
-        if [ -t 0 ]; then
-            case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
-            _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality to download: " || true)
-            [ -n "$_new_q" ] && quality="$_new_q"
-        fi
         _links=$(jq -r '.links // empty' "$tmpfile2")
         [ -z "$_links" ] && die "No downloadable links for '$_title'."
         _parsed="$(parse_links "$_links")"
+        if [ -t 0 ]; then
+            case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
+            _ql="$(printf '%s\n' "$_parsed" | grep -oE '[0-9]+p' | sort -u)"
+            [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
+            _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
+            [ -n "$_new_q" ] && quality="$_new_q"
+        fi
         _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
         if [ "$quality" != "best" ]; then
             _qm=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
