@@ -3,7 +3,6 @@
     "description": "Search, stream, and download movies, series and anime from the terminal",
     "homepage": "https://github.com/spaciousejar/vicine-cli",
     "license": "GPL-3.0",
-    "bin": "vicine",
     "depends": [
         "git",
         "jq",
@@ -11,5 +10,11 @@
         "mpv"
     ],
     "url": "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.4.3.tar.gz",
-    "hash": "02e141b6360ad200abcdeef6f0de69889e518e2aabbf753d3f50af0f0c18480c"
+    "hash": "02e141b6360ad200abcdeef6f0de69889e518e2aabbf753d3f50af0f0c18480c",
+    "installer": {
+        "script": "@('@echo off', 'bash \"$dir\\vicine\" %*') -join \"`r`n\" | Set-Content -Encoding Ascii -Path \"$dir\\vicine.cmd\""
+    },
+    "bin": [
+        "vicine.cmd"
+    ]
 }

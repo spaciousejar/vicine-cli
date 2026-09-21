@@ -266,6 +266,20 @@ henc() {
     printf '%s' "$1" | jq -sRr '@uri'
 }
 
+# Highest-resolution link from parsed "url\tdesc\tsize" lines; falls back to
+# the last line when no resolution can be parsed from the descriptions.
+movie_best_url() {
+    _mb="$(printf "%s" "$1" | awk -F'\t' 'match(tolower($2), /[0-9]+p/) { print substr($2, RSTART, RLENGTH)+0 "\t" $1 }' | sort -rn | head -1 | cut -f2-)"
+    [ -n "$_mb" ] && printf "%s" "$_mb" || printf "%s" "$1" | tail -1 | cut -f1
+}
+
+# Pick the parsed line whose description carries $2 (quality) — matched
+# against the description only, so a URL containing "720p" can't shadow a
+# 1080p line. Last match wins.
+movie_quality_url() {
+    printf "%s" "$1" | awk -F'\t' -v q="$2" 'index(tolower($2), tolower(q))' | tail -1 | cut -f1
+}
+
 # ─── Selection helpers ──────────────────────────────────────────────────────
 
 # Present items from JSON file via fzf/nth, write selected JSON to tmpfile2
@@ -828,9 +842,9 @@ prompt_action() {
     [ -z "$_links" ] && warn "No downloadable links." && return 1
 
     _parsed="$(parse_links "$_links")"
-    _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
+    _best_url=$(movie_best_url "$_parsed")
     if [ "$quality" != "best" ]; then
-        _q_match=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
+        _q_match=$(movie_quality_url "$_parsed" "$quality")
         [ -n "$_q_match" ] && _best_url="$_q_match"
     fi
 
@@ -855,9 +869,9 @@ prompt_action() {
                 _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _parsed="$(parse_links "$_links")"
-                _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
+                _best_url=$(movie_best_url "$_parsed")
                 if [ "$quality" != "best" ]; then
-                    _q_match=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
+                    _q_match=$(movie_quality_url "$_parsed" "$quality")
                     [ -n "$_q_match" ] && _best_url="$_q_match"
                 fi
                 _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
@@ -1036,12 +1050,13 @@ anidb_m3u8() {
     [ -z "$_master" ] && return 1
     _mp="$(anime_cdn_curl "$_master")"
     _master_dir="$(dirname "$_master")"
-    _variants="$(printf "%s" "$_mp" | grep -E '^[0-9]+/index\.m3u8$')"
-    if [ -z "$_variants" ]; then
+    _listed="$(printf "%s\n" "$_mp" | anime_variants "$_master_dir")"
+    if [ -z "$_listed" ]; then
+        # no parseable variants (media playlist / single source) — play it whole
         printf "auto>%s\n" "$_master"
         return 0
     fi
-    printf "%s\n" "$_mp" | anime_variants "$_master_dir"
+    printf "%s\n" "$_listed"
 }
 
 # pick quality variant → prints chosen m3u8 line to stdout (sets nothing)
@@ -1639,14 +1654,14 @@ case "$search_mode" in
         _parsed="$(parse_links "$_links")"
         if [ -t 0 ]; then
             case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
-            _ql="$(printf '%s\n' "$_parsed" | grep -oE '[0-9]+p' | sort -u)"
+            _ql="$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u)"
             [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
             _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
             [ -n "$_new_q" ] && quality="$_new_q"
         fi
-        _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
+        _best_url=$(movie_best_url "$_parsed")
         if [ "$quality" != "best" ]; then
-            _qm=$(printf "%s" "$_parsed" | grep -iF "$quality" | tail -1 | cut -f1)
+            _qm=$(movie_quality_url "$_parsed" "$quality")
             [ -n "$_qm" ] && _best_url="$_qm"
         fi
         _mresolved=$(resolve_stream_url "$_best_url")

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Movie quality selection matches the description only — a URL containing
+  e.g. "720p" can no longer shadow a higher-quality line in `-q` movie
+  play/download-all.
+- The `-D` movie quality menu lists qualities from the descriptions, not
+  the URLs.
+- Anime masters with absolute variant URLs are now parsed like relative
+  ones, so `-q` works there too (previously the `auto>` fallback ignored
+  the chosen quality).
+
+### Changed
+
+- Movie `best` picks the highest-resolution link instead of the last
+  listed one.
+- Scoop manifest shims `vicine` through a Git-Bash wrapper (the raw POSIX
+  script can't be executed directly by a scoop shim).
+
 ## [1.4.3] - 2026-09-21
 
 ### Added
