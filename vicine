@@ -479,11 +479,12 @@ do_download() {
     # download can never leave a partial file that looks complete. yt-dlp's
     # own .part staging is left in place on failure so it can resume.
     _pt="${_dl_file}.part"
+    _yt="--no-warnings --quiet --progress"
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         else
-            yt-dlp --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         fi
         rm -f "$_pt"
     fi
