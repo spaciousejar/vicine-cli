@@ -43,6 +43,7 @@ installer](#one-liner-installer).
 - **Homebrew** (tap provided by this repo):
   ```sh
   brew tap spaciousejar/vicine-cli
+  brew trust spaciousejar/vicine-cli   # required by Homebrew 6.0+ tap-trust
   brew install vicine
   ```
   Installs `jq`, `fzf`, `mpv` as dependencies. Prefer IINA? `brew install
@@ -97,7 +98,7 @@ sudo cp vicine /usr/local/bin/vicine
 
 - Installed via npm: `npm update -g vicine`
 - Installed via AUR: `yay -S vicine` (or a regular `pacman -Syu` once installed)
-- Installed via Homebrew: `brew upgrade vicine`
+- Installed via Homebrew: `brew trust spaciousejar/vicine-cli && brew upgrade vicine`
 - Installed via Nix: `nix profile upgrade github:spaciousejar/vicine-cli`
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
 
