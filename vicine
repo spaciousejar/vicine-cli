@@ -965,9 +965,11 @@ anidb_episodes() {
 
 # zokoanime embed: window.__P is XOR("otaku-embed-v1") of base64(JSON) → m3u8 src
 ANIME_ZOKO_KEY="otaku-embed-v1"
+# key byte values — a constant, computed once instead of per episode
+ANIME_ZOKO_NUMS="$(printf '%s' "$ANIME_ZOKO_KEY" | od -An -v -tu1 | sed 's/^ *//')"
 zoko_xor() {
     # base64 → od decimal bytes → numeric XOR with key → plaintext JSON (ASCII)
-    _kn="$(printf '%s' "$ANIME_ZOKO_KEY" | od -An -v -tu1 | sed 's/^ *//')"
+    _kn="${ANIME_ZOKO_NUMS:-$(printf '%s' "$ANIME_ZOKO_KEY" | od -An -v -tu1 | sed 's/^ *//')}"
     { base64 -d 2>/dev/null || base64 -D 2>/dev/null; } |
         od -An -v -tu1 |
         awk -v kn="$_kn" '
