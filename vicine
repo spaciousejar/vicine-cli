@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.4.1"
+version_number="1.4.2"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
