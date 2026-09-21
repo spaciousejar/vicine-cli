@@ -1,0 +1,29 @@
+name: Publish to AUR
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Derive pkgver from the release tag (v1.4.2 → 1.4.2); updpkgsums
+      # recomputes sha256sums inside the action for the new tarball.
+      - name: Bump pkgver from the release tag
+        run: |
+          cp aur/PKGBUILD ./PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${GITHUB_REF_NAME#v}/" ./PKGBUILD
+
+      - name: Publish AUR package
+        uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: vicine
+          pkgbuild: ./PKGBUILD
+          updpkgsums: 'true'
+          commit_username: spaciousejar
+          commit_email: 76901120+spaciousejar@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          ssh_keyscan_types: rsa,ecdsa,ed25519

@@ -95,6 +95,8 @@ git push origin v1.3.0
 1. publishes `vicine@<version>` to npmjs
 2. creates a GitHub Release with notes generated from the commits since the previous tag (skipped if the release already exists)
 
+Publishing the release triggers [`.github/workflows/aur.yml`](.github/workflows/aur.yml), which bumps `pkgver`, recomputes the checksum, and pushes the AUR package (`aur/PKGBUILD`). It needs the `AUR_SSH_PRIVATE_KEY` repo secret (the SSH key registered at aur.archlinux.org).
+
 ## Dependencies
 
 | Required | Optional |

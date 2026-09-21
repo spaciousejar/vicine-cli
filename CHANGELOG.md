@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- AUR publishing is automated: publishing a GitHub Release bumps `pkgver`
+  in `aur/PKGBUILD`, recomputes `sha256sums` and pushes to
+  aur.archlinux.org (`.github/workflows/aur.yml`) — no manual AUR update.
+
 ## [1.4.2] - 2026-09-21
 
 ### Added
