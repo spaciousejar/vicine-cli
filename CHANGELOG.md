@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaging for more OSes, all pinned to the release by
   `.github/workflows/pkg-bump.yml`: Homebrew formula (macOS), Scoop
   manifest (Windows), and a Nix flake.
+- Debian/Ubuntu packaging: `debian/` source package + a PPA upload
+  workflow (`.github/workflows/ppa.yml`).
 - AUR publishing is automated: publishing a GitHub Release bumps `pkgver`
   in `aur/PKGBUILD`, recomputes `sha256sums` and pushes to
   aur.archlinux.org (`.github/workflows/aur.yml`) — no manual AUR update.

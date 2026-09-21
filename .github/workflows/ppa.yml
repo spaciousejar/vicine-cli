@@ -1,0 +1,61 @@
+name: Publish to Launchpad PPA
+
+# Builds a source package for the release and uploads it to the
+# spaciousejar/vicine PPA. Skipped (no-op) until the two secrets exist:
+#   PPA_GPG_PRIVATE_KEY  - armored secret key used to sign the .changes
+#   PPA_SSH_PRIVATE_KEY  - SSH key registered on the Launchpad account
+# The GPG public key must be uploaded+confirmed on Launchpad, and the
+# DEBEMAIL address must be a confirmed email on the account.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  ppa:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.PPA_GPG_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y devscripts debhelper dpkg-dev dput
+
+      - name: Build source package
+        env:
+          DEBFULLNAME: vicky jadhav
+          DEBEMAIL: thedarkspacian@proton.me
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          wd="$RUNNER_TEMP/pkg"
+          mkdir -p "$wd"
+          curl -fsSL "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v${ver}.tar.gz" \
+            -o "$wd/vicine_${ver}.orig.tar.gz"
+          cd "$wd" && tar xzf "vicine_${ver}.orig.tar.gz"
+          mv "vicine-cli-${ver}" "vicine-${ver}"
+          cp -r "$GITHUB_WORKSPACE/debian" "vicine-${ver}/"
+          chmod +x "vicine-${ver}/vicine"
+          cd "vicine-${ver}"
+          dch --create -v "$ver-1" --package vicine -D unstable --force-distribution "Release $ver"
+          dpkg-buildpackage -S -sa
+
+      - name: Import GPG key and sign
+        env:
+          GPG_KEY: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+        run: |
+          gpg --batch --import <<< "$GPG_KEY"
+          keyid="$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')"
+          debsign -k "$keyid" "$RUNNER_TEMP/pkg"/*_source.changes
+
+      - name: Upload to PPA
+        env:
+          SSH_KEY: ${{ secrets.PPA_SSH_PRIVATE_KEY }}
+          LP_USER: spaciousejar
+        run: |
+          mkdir -p ~/.ssh
+          printf 'Host ppa.launchpad.net\n  User %s\n  IdentityFile ~/.ssh/lp\n  IdentitiesOnly yes\n' "$LP_USER" > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/lp
+          chmod 600 ~/.ssh/lp
+          ssh-keyscan ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
+          dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg"/*_source.changes

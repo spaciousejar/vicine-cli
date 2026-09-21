@@ -138,10 +138,13 @@ repo-hosted packages current: on every release it rewrites the version and
 checksum pins in the Homebrew formula (`Formula/vicine.rb`), the Scoop
 manifest (`bucket/vicine.json`), and the Nix flake (`flake.nix`).
 
-> Debian/Ubuntu (PPA), Fedora/COPR, and openSUSE (OBS) packages aren't
-> hosted yet — they need accounts on launchpad.net / copr.fedorainfracloud.org
-> / build.opensuse.org respectively. Solved, vicine is a single script that
-> also installs via npm, the one-liner, or git on those distros.
+> Debian/Ubuntu (PPA): `.github/workflows/ppa.yml` builds and uploads a
+> source package to launchpad.net when the `vicine` PPA exists under
+> `~spaciousejar` and the `PPA_GPG_PRIVATE_KEY` / `PPA_SSH_PRIVATE_KEY`
+> secrets are set. Fedora/COPR and openSUSE/OBS aren't hosted yet —
+> they need accounts on copr.fedorainfracloud.org / build.opensuse.org.
+> Until then, vicine installs on those distros via npm, the one-liner, or
+> git.
 
 ## Dependencies
 

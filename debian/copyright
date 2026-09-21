@@ -1,0 +1,11 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: vicine
+Upstream-Contact: vicky jadhav <thedarkspacian@proton.me>
+Source: https://github.com/spaciousejar/vicine-cli
+
+Files: *
+Copyright: 2026 vicky jadhav
+License: GPL-3.0-or-later
+ The full text of the GPL-3.0-or-later license is available at
+ https://www.gnu.org/licenses/gpl-3.0.txt and in the LICENSE file of the
+ upstream repository.

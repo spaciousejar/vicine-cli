@@ -1,0 +1,16 @@
+Source: vicine
+Section: utils
+Priority: optional
+Maintainer: vicky jadhav <thedarkspacian@proton.me>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/spaciousejar/vicine-cli
+
+Package: vicine
+Architecture: all
+Depends: ${misc:Depends}, curl, jq, fzf, mpv
+Recommends: yt-dlp, ffmpeg
+Description: Search, stream, and download movies, series and anime from the terminal
+ A POSIX shell script to search, stream, and download movies, series and
+ anime from the terminal. Uses the hicine and hianime APIs; plays through
+ mpv, iina or vlc.
