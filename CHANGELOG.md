@@ -9,16 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `-D` now works on movies: it downloads the chosen-quality file (same
-  selection as `-d`) instead of erroring out.
+- `-D` on a movie downloads the chosen-quality file (same selection as `-d`).
+- Interactive `-D` (series): before the confirm, you're prompted to pick a
+  quality and select which seasons to download (multi-select; empty = all).
+  Non-TTY runs keep the old all-seasons, `-q`-driven behavior.
 
 ### Changed
 
-- Downloads stage with a single `.part` level: yt-dlp writes to the final
-  name and manages its own `.part` + resume, so interrupted runs resume
-  cleanly and never leave a double-suffixed artifact (the earlier
-  `-o name.part` + yt-dlp staging produced `name.part.part`). ffmpeg/curl
-  fallbacks still stage through `.part` + atomic rename.
+- Dead episode links are now handled honestly: URLs with an empty
+  `vcloud=` token (API placeholders) fail resolution instead of passing
+  through, `-D` skips them with "unavailable — skipped", and downloads are
+  rejected when the fetched content is an HTML/XML page — no more 3 KB
+  "mp4" files that pretend to be episodes.
+- Downloads stage with a single `.part` level (yt-dlp writes to the final
+  name, manages its own staging + resume; ffmpeg/curl stage through `.part`
+  + atomic rename).
 
 - Whole-season ZIP entries (`season_zip`): when a selected season has no
   per-episode data, vicine picks the quality variant, resolves the archive

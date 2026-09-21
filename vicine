@@ -168,7 +168,13 @@ api_fetch() {
 resolve_stream_url() {
     _workers_url="$1"
     _vcloud_val="$(printf "%s" "$_workers_url" | sed -n 's/.*vcloud=//p' | sed 's/[& ].*//')"
-    [ -z "$_vcloud_val" ] && printf "%s" "$_workers_url" && return
+    if [ -z "$_vcloud_val" ]; then
+        # ?vcloud= present but empty → dead API placeholder; direct URLs
+        # (no vcloud at all) still pass through
+        printf "%s" "$_workers_url" | grep -q 'vcloud=' && return 1
+        printf "%s" "$_workers_url"
+        return 0
+    fi
 
     _base="$(printf "%s" "$_workers_url" | sed 's/?.*//' | sed 's|/$||')"
     _tokens_json=""
@@ -463,6 +469,17 @@ play_url() {
 
 # ─── Download ───────────────────────────────────────────────────────────────
 
+# reject downloads that turned out to be HTML/XML error pages
+_stage_ok() {
+    [ -s "$1" ] || { rm -f "$1"; return 1; }
+    case "$(head -c 16 "$1" 2>/dev/null | tr -d '\000')" in
+        \<\!\ *|\<\!DOCT*|\<html*|\<HTML*|\<\?xml*)
+            rm -f "$1"
+            return 1 ;;
+    esac
+    return 0
+}
+
 do_download() {
     _url="$1"
     _name="$2"
@@ -482,29 +499,29 @@ do_download() {
     _yt="--no-warnings --quiet --progress"
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && { ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && _stage_ok "$_dl_file" && { ok "Saved: $_dl_file" && return 0; }
         else
-            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && { ok "Saved: $_dl_file" && return 0; }
+            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url" && _stage_ok "$_dl_file" && { ok "Saved: $_dl_file" && return 0; }
         fi
         # non-interrupt failure: drop staging so a retry isn't poisoned
-        rm -f "$_pt"
+        rm -f "$_dl_file"
     fi
     # fallbacks don't resume — start clean
     rm -f "$_pt" "$_pt.part"
     if command -v ffmpeg >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         else
-            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
         fi
         rm -f "$_pt"
     fi
     # curl: -f makes HTTP errors (403/404) fail instead of saving the error
     # body and claiming success
     if [ -n "$_ref" ]; then
-        curl -fL -e "$_ref" --progress-bar -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+        curl -fL -e "$_ref" --progress-bar -o "$_pt" "$_url" && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
     else
-        curl -fL --progress-bar -o "$_pt" "$_url" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
+        curl -fL --progress-bar -o "$_pt" "$_url" && _stage_ok "$_pt" && { mv -f "$_pt" "$_dl_file" && ok "Saved: $_dl_file" && return 0; }
     fi
     rm -f "$_pt"
     warn "Download failed: $_url"
@@ -1399,12 +1416,32 @@ case "$search_mode" in
             _title="$(jq -r '.title' "$tmpfile2" | hdec)"
             _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
 
-            # Count episodes across all seasons using the same parser we download from
+            # Interactive: let the user pick the quality and seasons first
+            if [ -t 0 ]; then
+                case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
+                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality to download: " || true)
+                [ -n "$_new_q" ] && quality="$_new_q"
+                printf "" > "$tmpfile3"
+                _si=1
+                while [ "$_si" -le "$_sc" ]; do
+                    printf "Season %s\n" "$_si" >> "$tmpfile3"
+                    _si=$(( _si + 1 ))
+                done
+                _sel=$(cat "$tmpfile3" | menu "Seasons to download (picks = those, empty = all): " "$menu_multi_flag")
+                _sel_seasons=""
+                if [ -n "$_sel" ]; then
+                    printf "%s\n" "$_sel" | grep -o '[0-9]*' | sort -n > "$tmpfile3"
+                    _sel_seasons="$(cat "$tmpfile3")"
+                fi
+            fi
+            _season_selected() { [ -z "$_sel_seasons" ] && return 0; printf '%s\n' "$_sel_seasons" | grep -qx "$1"; }
+
+            # Count episodes across all selected seasons using the same parser we download from
             _total=0
             _si=1
             while [ "$_si" -le "$_sc" ]; do
                 _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
-                if [ -n "$_season_text" ]; then
+                if [ -n "$_season_text" ] && _season_selected "$_si"; then
                     _ep_list=$(parse_episodes "$_season_text" "$quality")
                     _n=$(printf '%s\n' "$_ep_list" | grep -c . || true)
                     _total=$(( _total + _n ))
@@ -1420,12 +1457,16 @@ case "$search_mode" in
             while [ "$_si" -le "$_sc" ]; do
                 _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
                 _ep_list=""
-                [ -n "$_season_text" ] && _ep_list=$(parse_episodes "$_season_text" "$quality")
+                [ -n "$_season_text" ] && _season_selected "$_si" && _ep_list=$(parse_episodes "$_season_text" "$quality")
                 if [ -n "$_ep_list" ]; then
                     printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
                         _enum=$(printf '%02d' "$_num")
                         _resolved=$(resolve_stream_url "$_url")
-                        [ -n "$_resolved" ] && do_download "$_resolved" "${_safe}_S${_si}E${_enum}"
+                        if [ -z "$_resolved" ]; then
+                            warn "Episode $_num (S${_si}) unavailable — skipped."
+                            continue
+                        fi
+                        do_download "$_resolved" "${_safe}_S${_si}E${_enum}"
                     done
                 fi
                 _si=$(( _si + 1 ))
