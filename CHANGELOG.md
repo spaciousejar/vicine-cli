@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `-D` quality selectors list only the qualities that are actually
   available for the item (union of episode/link variants), falling back to
   the standard list when they can't be determined.
+- `-D` downloads run in parallel: `VICINE_DL_JOBS` (default 2) episodes
+  download concurrently (a 4 × 2 s batch takes ~4 s instead of ~8 s). Both
+  download loops were moved off pipeline-subshells so their `wait` and
+  counters work in the current shell; quality menus share one
+  `pick_quality_menu` helper and selects read their list via stdin redirection.
 
 - Whole-season ZIP entries (`season_zip`): when a selected season has no
   per-episode data, vicine picks the quality variant, resolves the archive

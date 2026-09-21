@@ -66,6 +66,13 @@ menu() {
     esac
 }
 
+# quality picker: "best" + the qualities given on stdin; prints the choice
+pick_quality_menu() {
+    _pq_list="$(cat 2>/dev/null || true)"
+    [ -n "$_pq_list" ] || _pq_list=$(printf '480p\n720p\n1080p\n2160p')
+    printf 'best\n%s\n' "$_pq_list" | menu "$1" || true
+}
+
 help_info() {
     cat <<EOF
 
@@ -284,7 +291,7 @@ select_item() {
         return 0
     fi
 
-    _selection=$(cat "$tmpfile3" | menu "Select (${_count} results): ") || return 1
+    _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 1
     [ -z "$_selection" ] && return 1
 
     # Extract first index from selection (display is 1-based, array is 0-based)
@@ -389,7 +396,7 @@ cmd_history() {
     _count=$(wc -l < "$histfile")
     printf "" > "$tmpfile3"
     awk -F'\t' '{ printf "%d  %s", NR, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" >> "$tmpfile3"
-    _pick=$(cat "$tmpfile3" | menu "Continue (${_count}): ")
+    _pick=$(menu "Continue (${_count}): " < "$tmpfile3")
     [ -z "$_pick" ] && return 0
     _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
     [ -z "$_idx" ] && return 0
@@ -586,7 +593,7 @@ episode_loop() {
         [ "$_sc" -gt 1 ] && printf "change_season\n" >> "$tmpfile3"
         printf "change_quality\nquit\n" >> "$tmpfile3"
 
-        _ctrl=$(cat "$tmpfile3" | menu "Playing ep ${_cur_ep}/${_ep_total}: ${_title}... ")
+        _ctrl=$(menu "Playing ep ${_cur_ep}/${_ep_total}: ${_title}... " < "$tmpfile3")
         [ -z "$_ctrl" ] && break
 
         case "$_ctrl" in
@@ -598,11 +605,11 @@ episode_loop() {
                 printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
                      printf "%-12s  %s  %s\n" "Ep $_num" "$_qual" "$_size" >> "$tmpfile3"
                 done
-                _pick=$(cat "$tmpfile3" | menu "Select episode: ")
+                _pick=$(menu "Select episode: " < "$tmpfile3")
                 [ -n "$_pick" ] && _cur_ep=$(printf "%s" "$_pick" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
                 ;;
             change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality: ")
+                _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
@@ -615,7 +622,7 @@ episode_loop() {
                     printf "Season %s\n" "$_si" >> "$tmpfile3"
                     _si=$(( _si + 1 ))
                 done
-                _spick=$(cat "$tmpfile3" | menu "Switch season: ")
+                _spick=$(menu "Switch season: " < "$tmpfile3")
                 _sn=$(printf "%s" "$_spick" | grep -o '[0-9]*')
                 [ -z "$_sn" ] && continue
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
@@ -651,7 +658,7 @@ prompt_action() {
                 printf "Season %s\n" "$_i" >> "$tmpfile3"
                 _i=$(( _i + 1 ))
             done
-            _season_pick=$(cat "$tmpfile3" | menu "Seasons for ${_title}: ")
+            _season_pick=$(menu "Seasons for ${_title}: " < "$tmpfile3")
             [ -z "$_season_pick" ] && return 1
             _sn=$(printf "%s" "$_season_pick" | grep -o '[0-9]*')
         fi
@@ -745,7 +752,7 @@ prompt_action() {
                     printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
                         printf "%-12s  %s  %s\n" "Ep $_num" "$_qual" "$_size" >> "$tmpfile3"
                     done
-                    _ep_pick=$(cat "$tmpfile3" | menu "Episodes (Season $_sn): " "${menu_multi_flag}")
+                    _ep_pick=$(menu "Episodes (Season $_sn): " "${menu_multi_flag}" < "$tmpfile3")
                     [ -z "$_ep_pick" ] && return 1
                     # multi-select: use min/max picked as a range
                     _ep_first=$(printf "%s" "$_ep_pick" | head -1 | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
@@ -806,13 +813,13 @@ prompt_action() {
         printf "" > "$tmpfile3"
         printf "replay\n" >> "$tmpfile3"
         printf "change_quality\nquit\n" >> "$tmpfile3"
-        _ctrl=$(cat "$tmpfile3" | menu "Movie: $_title... ")
+        _ctrl=$(menu "Movie: $_title... " < "$tmpfile3")
         [ -z "$_ctrl" ] && break
 
         case "$_ctrl" in
             replay)             _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
             change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality: ")
+                _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _parsed="$(parse_links "$_links")"
                 _best_url=$(printf "%s" "$_parsed" | tail -1 | cut -f1)
@@ -1049,7 +1056,7 @@ anime_play_loop() {
         [ "$_is_first" = 0 ] && printf "previous\n" >> "$tmpfile3"
         [ "$_is_last" = 0 ] && printf "next\n" >> "$tmpfile3"
         printf "select\nchange_quality\nquit\n" >> "$tmpfile3"
-        _ctrl=$(cat "$tmpfile3" | menu "Playing ep ${_cur_ep}: ${anime_title}... " || true)
+        _ctrl=$(menu "Playing ep ${_cur_ep}: ${anime_title}... " < "$tmpfile3" || true)
         [ -z "$_ctrl" ] && break
         case "$_ctrl" in
             next)
@@ -1065,7 +1072,7 @@ anime_play_loop() {
                 [ -n "$_pick" ] && _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
                 ;;
             change_quality)
-                _new_q=$(printf 'best\n480p\n720p\n1080p\n2160p\n' | menu "Quality: " || true)
+                _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 ;;
             quit|*)   break ;;
@@ -1159,13 +1166,22 @@ cmd_anime() {
         printf "\n  ${C_YELLOW}Download ${_total} episode(s) of '${anime_title}'?${C_RESET} [y/N] "
         read -r _yn
         [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
-        printf "%s\n" "$anime_ep_list" | while IFS= read -r _ep; do
+        printf "%s\n" "$anime_ep_list" > "$tmpfile3"
+        _jobs=0
+        while IFS= read -r _ep; do
             if [ -n "$_rstart" ]; then
                 [ "$_ep" -ge "$_rstart" ] 2>/dev/null || continue
                 [ "$_ep" -le "$_rend" ] 2>/dev/null || continue
             fi
-            anime_play_episode "$_ep"
-        done
+            if [ "$dl_jobs" -gt 1 ]; then
+                ( anime_play_episode "$_ep" ) &
+                _jobs=$(( _jobs + 1 ))
+                [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
+            else
+                anime_play_episode "$_ep"
+            fi
+        done < "$tmpfile3"
+        wait
         return
     fi
 
@@ -1280,6 +1296,7 @@ anime_mode="${VICINE_ANIME_MODE:-sub}"
 anime_ep_maps=""
 anime_ep_list=""
 download_dir="${VICINE_DOWNLOAD_DIR:-$HOME/Movies}"
+dl_jobs="${VICINE_DL_JOBS:-2}"
 no_detach="${VICINE_NO_DETACH:-0}"
 info_only=0
 download_all_mode=0
@@ -1476,7 +1493,7 @@ case "$search_mode" in
                     printf "Season %s\n" "$_si" >> "$tmpfile3"
                     _si=$(( _si + 1 ))
                 done
-                _sel=$(cat "$tmpfile3" | menu "Seasons to download (picks = those, empty = all): " "$menu_multi_flag")
+                _sel=$(menu "Seasons to download (picks = those, empty = all): " "$menu_multi_flag" < "$tmpfile3")
                 _sel_seasons=""
                 if [ -n "$_sel" ]; then
                     printf "%s\n" "$_sel" | grep -o '[0-9]*' | sort -n > "$tmpfile3"
@@ -1513,15 +1530,26 @@ case "$search_mode" in
                 _ep_list=""
                 [ -n "$_season_text" ] && _season_selected "$_si" && _ep_list=$(parse_episodes "$_season_text" "$quality")
                 if [ -n "$_ep_list" ]; then
-                    printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
+                    # read from a file (not a pipeline) so background jobs and
+                    # wait work in the current shell for parallel downloads
+                    printf '%s\n' "$_ep_list" > "$tmpfile3"
+                    _jobs=0
+                    while IFS='	' read -r _num _url _qual _size; do
                         _enum=$(printf '%02d' "$_num")
                         _resolved=$(resolve_stream_url "$_url")
                         if [ -z "$_resolved" ]; then
                             warn "Episode $_num (S${_si}) unavailable — skipped."
                             continue
                         fi
-                        do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}"
-                    done
+                        if [ "$dl_jobs" -gt 1 ]; then
+                            ( do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}" ) &
+                            _jobs=$(( _jobs + 1 ))
+                            [ "$_jobs" -ge "$dl_jobs" ] && { wait; _jobs=0; }
+                        else
+                            do_download "$_resolved" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                        fi
+                    done < "$tmpfile3"
+                    wait
                 fi
                 _si=$(( _si + 1 ))
             done
