@@ -44,3 +44,25 @@ jobs:
         with:
           commit_message: "chore: bump packaged versions to ${{ github.ref_name }}"
           file_pattern: Formula/vicine.rb bucket/vicine.json flake.nix
+
+      # `brew tap spaciousejar/vicine-cli` clones the separate
+      # homebrew-vicine-cli repo, so the bumped formula is mirrored there.
+      - name: Push formula to the Homebrew tap
+        env:
+          SSH_KEY: ${{ secrets.TAP_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:spaciousejar/homebrew-vicine-cli.git "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          cp "$GITHUB_WORKSPACE/Formula/vicine.rb" Formula/vicine.rb
+          if git diff --quiet Formula/vicine.rb; then
+            echo "formula unchanged — nothing to push"
+          else
+            git config user.name spaciousejar
+            git config user.email 76901120+spaciousejar@users.noreply.github.com
+            git add Formula/vicine.rb
+            git commit -m "vicine ${ver}"
+            git push -q origin HEAD
+          fi
