@@ -924,26 +924,20 @@ cmd_search() {
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
         if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
-            cmd_anime "$_query"
+            warn "server-1 unreachable — trying server-2, then server-3."
+            _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
         elif [ "$download_all_mode" -eq 1 ]; then
-            # -D: hicine is down — the anime provider may still be up. Die
-            # only if cmd_anime itself has nothing.
-            warn "hicine API unreachable — trying the anime provider."
-            cmd_anime "$_query"
+            warn "server-1 unreachable — trying server-2, then server-3."
+            _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
         else
             die "Search failed: ${API} unreachable"
         fi
         return
     fi
     if ! select_item; then
-        if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
-            cmd_anime "$_query"
-        elif [ "$download_all_mode" -eq 1 ]; then
-            # -D: no hicine hit for this title — search hianime.at instead
-            # (e.g. anime that hicine never uploaded). cmd_anime takes over
-            # the whole download flow, so -A is no longer required.
-            warn "No results on hicine — trying the anime provider."
-            cmd_anime "$_query"
+        if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
+            warn "Not on server-1 — trying server-2, then server-3."
+            _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
         else
             warn "No results found for: $_query"
         fi
@@ -1619,7 +1613,7 @@ pop_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
     _enc=$(henc "$_query")
-    info "Searching (popmovie): $_query"
+    info "Searching (server-2): $_query"
     if ! curl -sf --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/search/multi?query=${_enc}" -o "$tmpfile"; then
         warn "popmovie API unreachable."; return 1
     fi
@@ -1701,6 +1695,8 @@ uninstall_self() {
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 # Config
+# Provider tags used in messages: server-1 = hicine, server-2 = popmovie
+# (TMDB/vidsrc backup), server-3 = hianime (anime)
 API="https://api.hicine.sbs"
 provider="${VICINE_PROVIDER:-hicine}"
 # HiAnime backend (hianimes.se is a page-only mirror: its /search and /api/*
@@ -1889,6 +1885,10 @@ case "$search_mode" in
         # by content (-s), not existence — otherwise the flow below runs on a
         # blank item and dies with "integer expected" / "No downloadable links".
         [ "$provider" = "popmovie" ] && exit 0
+        # a fallback provider (pop_search/anime) finished the download-all
+        # itself; its selection lives in tmpfile2 and must not re-enter the
+        # hicine download flow below
+        [ "$_backup_used" = "1" ] && exit 0
         [ -s "$tmpfile2" ] || exit 0
         mkdir -p "$download_dir"
 
@@ -2075,6 +2075,13 @@ case "$search_mode" in
         _msafe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         mkdir -p "$download_dir"
         do_download "$_mresolved" "$_msafe"
+        _mrc=$?
+        [ "$_mrc" -ge 130 ] && exit "$_mrc"
+        if [ "$_mrc" -ne 0 ]; then
+            # hicine movie link dead — popmovie (TMDB/vidsrc) may still have it
+            warn "server-1 download failed — trying server-2."
+            pop_search "$_title"
+        fi
         ;;
 esac
 

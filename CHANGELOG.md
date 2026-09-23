@@ -26,9 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloaded title skips existing files and fetches only the missing episodes.
 - Anime audio defaults to English dub; `--sub` (or
   `VICINE_ANIME_MODE=sub`) restores subtitled Japanese.
-- `-D` now falls back to the hianime anime provider automatically when hicine
-  returns no results (or is unreachable), so `-A` no longer needs to be typed
-  for anime-only titles.
+- `-D`/search now falls back automatically when hicine fails — popmovie
+  (TMDB/vidsrc backup) first, then the hianime anime provider — so no
+  `-A`/`VICINE_PROVIDER` flag needs to be typed for titles hicine lacks.
+- `-D` on a movie whose hicine links are dead retries the same title via the
+  popmovie backup instead of giving up.
 - Parallel bulk downloads no longer print per-job progress bars (they stomped
   each other on one terminal line); single downloads keep the progress bar.
 - `-D -e N` / `-e N-M` / `-e -1` now limit the downloaded episodes (it was
