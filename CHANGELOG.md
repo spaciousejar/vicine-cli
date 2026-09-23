@@ -17,6 +17,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `-D`/anime downloads fail fast on provider-side dead links: a dead signed
+  URL (HTTP 403/404/410 from the CDN bucket) is now detected with a 1-byte
+  probe before the full yt-dlp→ffmpeg→curl chain, printing one clear message
+  per episode instead of a wall of errors.
+- The anime `-A -D` download flow now saves episodes as `S1ENN.mp4` (matching
+  the series `-D` naming) instead of `EpNN.mp4`, so `-A -D` on a partly
+  downloaded title skips existing files and fetches only the missing episodes.
+- Anime audio defaults to English dub; `--sub` (or
+  `VICINE_ANIME_MODE=sub`) restores subtitled Japanese.
+- `-D` now falls back to the hianime anime provider automatically when hicine
+  returns no results (or is unreachable), so `-A` no longer needs to be typed
+  for anime-only titles.
+- Parallel bulk downloads no longer print per-job progress bars (they stomped
+  each other on one terminal line); single downloads keep the progress bar.
+- `-D -e N` / `-e N-M` / `-e -1` now limit the downloaded episodes (it was
+  silently ignored — the whole season downloaded anyway).
+- Anime `-D` returns a non-zero exit code when an episode fails to download
+  instead of reporting success.
+- Backup-provider playback no longer breaks on titles containing apostrophes.
+- `-D` on a search with no results exits cleanly instead of falling through
+  to the download flow with a blank item (`integer expected` /
+  `No downloadable links for ''`): the empty-search guard now checks content,
+  not mere file existence.
 - Movie quality selection matches the description only — a URL containing
   e.g. "720p" can no longer shadow a higher-quality line in `-q` movie
   play/download-all.

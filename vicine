@@ -88,7 +88,7 @@ ${C_WHITE}Commands:${C_RESET}
 ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}            Search movies/series/anime
     ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}             Search anime directly (hianime.at)
-    ${C_DIM}--dub / --sub${C_RESET}           Dub/sub audio for anime (default sub)
+    ${C_DIM}--dub / --sub${C_RESET}           Dub/sub audio for anime (default dub; VICINE_ANIME_MODE=sub to switch)
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}          Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
     ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}            Browse a collection
@@ -519,13 +519,39 @@ do_download() {
 
     [ -s "$_dl_file" ] && { warn "Already exists: $_dl_file (delete it if a previous download was interrupted)"; return 0; }
 
+    # Fail fast on provider-side dead links (the hicine workers resolver hands
+    # out stale signed URLs whose bucket 403s — line 746's zip-flow probes the
+    # same way). One 1-byte range hit beats the whole yt-dlp→ffmpeg→curl chain
+    # per episode. Only hard rejections short-circuit; every other outcome
+    # (timeout, range-averse server) keeps the old path. ponytail: assumes the
+    # source tolerates Range — streaming CDNs all do; revisit if a real source
+    # starts 200ing ranges but 403ing full GETs.
+    case "$_url" in
+        http://*|https://*)
+            if [ -n "$_ref" ]; then
+                _probe="$($curl_exe -sfL -r 0-0 -o /dev/null --max-time 20 -e "$_ref" -w '%{http_code}' "$_url" 2>/dev/null)"
+            else
+                _probe="$($curl_exe -sfL -r 0-0 -o /dev/null --max-time 20 -w '%{http_code}' "$_url" 2>/dev/null)"
+            fi
+            case "$_probe" in
+                401|403|404|410)
+                    warn "Source rejected the link (HTTP ${_probe}) — provider-side block or dead CDN. Try again later, a different quality, or -A for anime."
+                    return 1 ;;
+            esac ;;
+    esac
+
     info "Downloading: $_dl_safe"
 
     # Stage to $_dl_file.part and rename on success, so an interrupted
     # download can never leave a partial file that looks complete. yt-dlp does
     # its own single-level .part staging + resume when given the final path.
     _pt="${_dl_file}.part"
-    _yt="--no-warnings --quiet --progress"
+    # progress bars only for single, serial downloads. Parallel bulk runs
+    # (dl_jobs>1) have several yt-dlp bars repainting one terminal line and
+    # stampeding each other; the script's own Downloading/Saved lines give
+    # the feedback there instead.
+    _yt="--no-warnings --quiet"
+    if [ -n "$quiet_dl" ]; then _yt="$_yt --no-progress"; else _yt="$_yt --progress"; fi
     # local stamped playlist (popmovie) — yt-dlp needs file:// + enable-file-urls
     _dl_arg="$_url"; _file_flag=""
     if [ -f "$_url" ]; then
@@ -899,6 +925,11 @@ cmd_search() {
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
         if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
             cmd_anime "$_query"
+        elif [ "$download_all_mode" -eq 1 ]; then
+            # -D: hicine is down — the anime provider may still be up. Die
+            # only if cmd_anime itself has nothing.
+            warn "hicine API unreachable — trying the anime provider."
+            cmd_anime "$_query"
         else
             die "Search failed: ${API} unreachable"
         fi
@@ -906,6 +937,12 @@ cmd_search() {
     fi
     if ! select_item; then
         if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
+            cmd_anime "$_query"
+        elif [ "$download_all_mode" -eq 1 ]; then
+            # -D: no hicine hit for this title — search hianime.at instead
+            # (e.g. anime that hicine never uploaded). cmd_anime takes over
+            # the whole download flow, so -A is no longer required.
+            warn "No results on hicine — trying the anime provider."
             cmd_anime "$_query"
         else
             warn "No results found for: $_query"
@@ -1087,10 +1124,13 @@ anime_play_episode() {
     if [ "$download_all_mode" = 1 ]; then
         _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
         _epnum=$(printf '%02d' "$_ep_no")
-        do_download "$_video_link" "${_safe}/season-1/Ep${_epnum}" "$anime_embed_ref"
+        # S{season}E{ep} naming — same shape the series -D flow uses, so a
+        # re-run of -A -D on a partially-downloaded title skips existing files
+        # and only fetches the missing episodes (gap-fill in one run).
+        do_download "$_video_link" "${_safe}/season-1/S1E${_epnum}" "$anime_embed_ref"
         _rc=$?
         [ "$_rc" -ge 130 ] && return "$_rc"
-        return 0
+        return "$_rc"
     else
         info "Playing ep ${_ep_no}: ${anime_title}"
         play_url "$_video_link" "$anime_title - Episode $_ep_no" "$anime_embed_ref"
@@ -1251,11 +1291,13 @@ cmd_anime() {
                 [ "$_ep" -le "$_rend" ] 2>/dev/null || continue
             fi
             if [ "$dl_jobs" -gt 1 ]; then
+                quiet_dl=1
                 ( anime_play_episode "$_ep" ) &
                 _jobs=$(( _jobs + 1 ))
                 # dash's `wait` returns the last-finished job's status; ≥130 = interrupt
                 [ "$_jobs" -ge "$dl_jobs" ] && { wait; _rc=$?; _jobs=0; [ "$_rc" -ge 130 ] && exit "$_rc"; }
             else
+                quiet_dl=""
                 anime_play_episode "$_ep"
                 _rc=$?
                 [ "$_rc" -ge 130 ] && exit "$_rc"
@@ -1435,11 +1477,14 @@ pop_resolve() {
 pop_play() {
     _pl="$1"; _name="$2"
     if command -v yt-dlp >/dev/null 2>&1; then
+        # scrub shell-hostile chars from the title before embedding it in
+        # bash -c (apostrophes are realistic in TMDB titles)
+        _ptt="$(printf "%s" "$_name" | tr -d "'")"
         if [ "$exit_after_play" = 1 ] || [ "$no_detach" = 1 ]; then
             yt-dlp --enable-file-urls --no-playlist -f 'b' -o - "file://$_pl" | $player_function --force-media-title="$_name" -
             return $?
         fi
-        nohup bash -c "yt-dlp --enable-file-urls --no-playlist -f 'b' -o - 'file://$1' | $player_function --force-media-title='$2' -" > "$tmpfile4" 2>&1 &
+        nohup bash -c "yt-dlp --enable-file-urls --no-playlist -f 'b' -o - 'file://$1' | $player_function --force-media-title='$_ptt' -" > "$tmpfile4" 2>&1 &
         return 0
     fi
     player_extra="--demuxer-lavf-o=protocol_whitelist=file,https,tls,crypto,data"
@@ -1666,7 +1711,7 @@ anime_servers_api="${anime_base}/api/theme/episode/servers?episodeId=%s"
 # playback embeds come from zokoanime.video/…; hls.1embed.buzz CDN is referer-gated
 anime_embed_ref="https://zokoanime.video/"
 anime_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-anime_mode="${VICINE_ANIME_MODE:-sub}"
+anime_mode="${VICINE_ANIME_MODE:-dub}"
 anime_ep_maps=""
 anime_ep_list=""
 # player_extra: extra player flags (popmovie sets an mpv HLS whitelist
@@ -1838,9 +1883,12 @@ case "$search_mode" in
         [ -z "$query" ] && die "Missing query"
         cmd_search "$query"
         # popmovie handles -D inside pop_search; don't fall through to
-        # hicine's download-all on an empty/selected item
+        # hicine's download-all on an empty/selected item. tmpfile2 exists
+        # from startup (mktemp), so an empty/aborted search must be detected
+        # by content (-s), not existence — otherwise the flow below runs on a
+        # blank item and dies with "integer expected" / "No downloadable links".
         [ "$provider" = "popmovie" ] && exit 0
-        [ ! -f "$tmpfile2" ] && exit 0
+        [ -s "$tmpfile2" ] || exit 0
         mkdir -p "$download_dir"
 
         # Series: download every episode of every season at the chosen quality
@@ -1912,6 +1960,17 @@ case "$search_mode" in
                 _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
                 _ep_list=""
                 [ -n "$_season_text" ] && _season_selected "$_si" && _ep_list=$(parse_episodes "$_season_text" "$quality")
+                # honor -e N / N-M / -1 inside -D (episode_loop parity); an
+                # ignored -e previously downloaded the whole season silently
+                case "$requested_eps" in
+                    "") ;;
+                    -1) _le="$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)"
+                        _ep_list="$(printf '%s\n' "$_ep_list" | awk -F'\t' -v l="$_le" '$1==l')" ;;
+                    *-*) _rs="${requested_eps%-*}"; _re="${requested_eps#*-}"
+                        [ "$_re" = "-1" ] && _re="$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)"
+                        _ep_list="$(printf '%s\n' "$_ep_list" | awk -F'\t' -v s="$_rs" -v e="$_re" '$1>=s && $1<=e')" ;;
+                    *)  _ep_list="$(printf '%s\n' "$_ep_list" | awk -F'\t' -v n="$requested_eps" '$1==n')" ;;
+                esac
                 if [ -n "$_ep_list" ]; then
                     # read from a file (not a pipeline) so background jobs and
                     # wait work in the current shell for parallel downloads
@@ -1923,6 +1982,7 @@ case "$search_mode" in
                             # resolve + download in the worker so resolution
                             # overlaps the running downloads instead of
                             # serializing behind each batch's wait
+                            quiet_dl=1
                             ( _r="$(resolve_stream_url "$_url")"
                               if [ -z "$_r" ]; then
                                   warn "Episode $_num (S${_si}) unavailable — skipped."
@@ -1933,6 +1993,7 @@ case "$search_mode" in
                             _jobs=$(( _jobs + 1 ))
                             [ "$_jobs" -ge "$dl_jobs" ] && { wait; _rc=$?; _jobs=0; [ "$_rc" -ge 130 ] && exit "$_rc"; }
                         else
+                            quiet_dl=""
                             _r="$(resolve_stream_url "$_url")"
                             if [ -z "$_r" ]; then
                                 warn "Episode $_num (S${_si}) unavailable — skipped."
@@ -1949,6 +2010,45 @@ case "$search_mode" in
                 fi
                 _si=$(( _si + 1 ))
             done
+
+            # Anime-type hicine title (single season) with episodes still
+            # missing = their hicine links pointed at a dead bucket. Retry
+            # exactly those gaps through the hianime provider — it shares the
+            # S{sn}E{ep} naming, so they land in the same folder and nothing
+            # already downloaded is touched.
+            if [ "$_sc" -eq 1 ] && [ "$(jq -r '.contentType // ""' "$tmpfile2")" = "anime" ]; then
+                printf '%s\n' "$_ep_list" > "$tmpfile3"
+                _missing=""
+                while IFS='	' read -r _num _url _qual _size; do
+                    _enum=$(printf '%02d' "$_num")
+                    [ -s "${download_dir}/${_safe}/season-1/S1E${_enum}.mp4" ] ||
+                        _missing="$_missing $_num"
+                done < "$tmpfile3"
+                if [ -n "$_missing" ]; then
+                    info "Retrying missing episodes via hianime:$_missing"
+                    anime_list="$(anidb_search "$_title" 2>/dev/null || true)"
+                    # exact title match first, else first result whose title
+                    # contains ours — avoids grabbing an unrelated show
+                    _amatch="$(printf '%s\n' "$anime_list" | awk -F'\t' -v t="$_title" 'tolower($2)==tolower(t){print; exit}')"
+                    [ -z "$_amatch" ] && _amatch="$(printf '%s\n' "$anime_list" | awk -F'\t' -v t="$_title" 'index(tolower($2), tolower(t)){print; exit}')"
+                    if [ -z "$_amatch" ]; then
+                        warn "No matching title on hianime — missing episodes stay missing."
+                    else
+                        anime_id="$(printf '%s' "$_amatch" | cut -f 1)"
+                        anime_title="$(printf '%s' "$_amatch" | cut -f 2)"
+                        anime_ep_maps="$(anidb_episodes "$anime_id")"
+                        if [ -n "$anime_ep_maps" ]; then
+                            for _ep in $_missing; do
+                                anime_play_episode "$_ep"
+                                _rc=$?
+                                [ "$_rc" -ge 130 ] && exit "$_rc"
+                            done
+                        else
+                            warn "No episodes found on hianime for '$anime_title'."
+                        fi
+                    fi
+                fi
+            fi
             exit 0
         fi
 
