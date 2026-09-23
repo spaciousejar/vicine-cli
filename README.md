@@ -46,10 +46,12 @@ VICINE_PROVIDER=popmovie vicine -q 1080p -D reacher
 ```
 
 Notes: episodes resolve per (tmdb id, season, episode); the quality ladder
-is inside the resolved playlist (`-q` is honored by the player, not the
-provider); encrypted stream payloads need `node` (usually already present
-via npm). Trending/recent/stats, anime (`-A`), and the watch history (uses
-TMDB ids) work as usual.
+is inside the resolved playlist (`-q` selects the matching variant);
+encrypted stream payloads need `node` (usually already present via npm).
+Playback pipes the stamped playlist through `yt-dlp` into the player —
+that sidesteps mpv's local-playlist network whitelist, but the pipe means
+no seeking (backup-provider tradeoff). Trending/recent/stats, anime
+(`-A`), and the watch history (uses TMDB ids) work as usual.
 
 ## Installation
 

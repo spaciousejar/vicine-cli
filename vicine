@@ -154,7 +154,7 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5"
     exit "$_exit_code"
 }
 
@@ -469,9 +469,9 @@ play_url() {
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup $player_function $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 &
+                nohup $player_function $player_extra $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 &
             else
-                $player_function $_hdr --force-media-title="$_name" "$_url"
+                $player_function $player_extra $_hdr --force-media-title="$_name" "$_url"
                 return $?
             fi
             ;;
@@ -1321,6 +1321,68 @@ pop_stamp() {
     esac
 }
 
+# _stamp_line: helper for pop_m3u8 — absolute-ize + token-stamp one URL
+pop_stamp_url() {
+    _su="$1"
+    case "$_su" in
+        https?://*) printf '%s' "$_su" ;;
+        *) [ "${_su#/}" = "$_su" ] && _su="/$_su"; printf '%s%s' "$pop_m3u8_host" "$_su" ;;
+    esac
+}
+
+# Fetch the (master-tokenstamped) playlist, pick the -q variant, then rewrite
+# every URI/segment to an absolute token-carrying URL into the shared local
+# $tmpfile5. Segments would otherwise 403 — the JS player rewrites them
+# client-side; mpv/yt-dlp can't. Honors quality via the RESOLUTION ladder.
+pop_m3u8() {
+    _u="$1"
+    pop_m3u8_host="$(printf '%s' "$_u" | sed -E 's#(https?://[^/]+).*#\1#')"
+    _tok="${_u##*token=}"
+    pop_m3u8_qs="?token=${_tok}"
+    _master="$(curl -sL --max-time 15 -A "$anime_agent" -e "$POP_REF" "$_u")" || return 1
+    [ -n "$_master" ] || return 1
+    # pair each STREAM-INF height with the following variant URL
+    _pairs="$(printf '%s\n' "$_master" | awk '
+        /^#EXT-X-STREAM-INF:/ { h=""; if (match($0, /RESOLUTION=[0-9]+x[0-9]+/)) { r=substr($0, RSTART, RLENGTH); sub(/^RESOLUTION=[0-9]+x/, "", r) } h=r; next }
+        /^[^#]/ { if (h != "") { print h "\t" $0; h="" } }')"
+    if [ "$quality" = "best" ]; then
+        _cv="$(printf '%s\n' "$_pairs" | sort -t"	" -k1,1n | tail -1 | cut -f2-)"
+    else
+        _hv="${quality%p}"
+        _cv="$(printf '%s\n' "$_pairs" | awk -v h="$_hv" -F"	" '$1==h{print $2; exit}')"
+        [ -n "$_cv" ] || _cv="$(printf '%s\n' "$_pairs" | sort -t"	" -k1,1n | tail -1 | cut -f2-)"
+    fi
+    case "$_cv" in
+        https?://*) _var="$_cv" ;;
+        *) _var="$(pop_stamp_url "$_cv")" ;;
+    esac
+    case "$_var" in
+        *token=*) : ;;
+        *__TOKEN__*) _var="$(printf '%s' "$_var" | sed "s|__TOKEN__|$_tok|")" ;;
+        *) case "$_var" in *\?*) _var="${_var}&token=${_tok}" ;; *) _var="${_var}?token=${_tok}" ;; esac ;;
+    esac
+    _vpl="$(curl -sL --max-time 15 -A "$anime_agent" -e "$POP_REF" "$_var")" || return 1
+    [ -n "$_vpl" ] || return 1
+    : > "$tmpfile5"
+    printf '%s\n' "$_vpl" | awk -v host="$pop_m3u8_host" -v qs="$pop_m3u8_qs" '
+        function stamp(u) {
+            if (u ~ /^https?:\/\//) { if (u ~ /token=/) return u; return u (u ~ /\?/ ? "&" : "?") "token=" qs }
+            if (u ~ /^\//) return host u qs
+            return host "/" u qs
+        }
+        /#EXT-X-KEY:|URI="/ {
+            while (match($0, /URI="[^"]*"/)) {
+                u = substr($0, RSTART+5, RLENGTH-6)
+                s = stamp(u)
+                $0 = substr($0, 1, RSTART+4) s substr($0, RSTART+RLENGTH)
+            }
+            print; next
+        }
+        /^#/ { print; next }
+        { print stamp($0) }' >> "$tmpfile5"
+    [ -s "$tmpfile5" ] && printf '%s' "$tmpfile5"
+}
+
 # api.php response -> line-delimited raw stream URLs (decrypts via node)
 pop_streams() {
     _resp="$1"
@@ -1361,17 +1423,37 @@ pop_resolve() {
     pop_stamp "$(printf '%s\n' "$_urls" | head -1)"
 }
 
+# play a local stamped playlist: pipe through yt-dlp when available (mpv's
+# lavf whitelist can't take comma lists on modern builds, blocking https
+# segments from a local file); fall back to direct mpv (works on permissive
+# builds). Piping costs seeking — fine for a backup provider.
+pop_play() {
+    _pl="$1"; _name="$2"
+    if command -v yt-dlp >/dev/null 2>&1; then
+        if [ "$exit_after_play" = 1 ] || [ "$no_detach" = 1 ]; then
+            yt-dlp --enable-file-urls --no-playlist -f 'b' -o - "file://$_pl" | $player_function --force-media-title="$_name" -
+            return $?
+        fi
+        nohup bash -c "yt-dlp --enable-file-urls --no-playlist -f 'b' -o - 'file://$1' | $player_function --force-media-title='$2' -" > "$tmpfile4" 2>&1 &
+        return 0
+    fi
+    player_extra="--demuxer-lavf-o=protocol_whitelist=file,https,tls,crypto,data"
+    [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ] || { $player_function $player_extra --force-media-title="$_name" "$_pl"; return $?; }
+    nohup $player_function $player_extra --force-media-title="$_name" "$_pl" > "$tmpfile4" 2>&1 &
+}
+
 pop_play_ep() { # id season ep title — resolve + play/download one episode
     _id="$1"; _sn="$2"; _ep="$3"; _title="$4"
     _u="$(pop_resolve tv "$_id" "$_sn" "$_ep")" || { warn "No stream for S${_sn}E${_ep}."; return 1; }
     [ -z "$_u" ] && { warn "No stream for S${_sn}E${_ep}."; return 1; }
+    _pl="$(pop_m3u8 "$_u")" || { warn "No stream for S${_sn}E${_ep}."; return 1; }
     if [ "$download_all_mode" = 1 ]; then
         _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
-        do_download "$_u" "${_safe}/season-${_sn}/S${_sn}E$(printf '%02d' "$_ep")" "$POP_REF"
+        do_download "$_pl" "${_safe}/season-${_sn}/S${_sn}E$(printf '%02d' "$_ep")"
         return $?
     fi
     info "Playing S${_sn}E${_ep}: ${_title}"
-    play_url "$_u" "${_title} - S${_sn}E${_ep}" "$POP_REF"
+    pop_play "$_pl" "${_title} - S${_sn}E${_ep}"
     _rc=$?
     update_history "$_id" "$_title" series "$_sn" "$_ep"
     [ "$exit_after_play" = 1 ] && exit "$_rc"
@@ -1469,13 +1551,14 @@ pop_movie() { # id title
     _id="$1"; _title="$2"
     _u="$(pop_resolve movie "$_id")" || { warn "No stream found."; return 1; }
     [ -z "$_u" ] && { warn "No stream found."; return 1; }
+    _pl="$(pop_m3u8 "$_u")" || { warn "No stream found."; return 1; }
     if [ "$download_all_mode" = 1 ] || [ "$player_function" = "download" ]; then
         _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
-        do_download "$_u" "$_safe" "$POP_REF"
+        do_download "$_pl" "$_safe"
         return $?
     fi
     info "Playing: $_title"
-    play_url "$_u" "$_title" "$POP_REF"
+    pop_play "$_pl" "$_title"
     _rc=$?
     update_history "$_id" "$_title" movie 0 0
     [ "$exit_after_play" = 1 ] && exit "$_rc"
@@ -1581,6 +1664,9 @@ anime_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML
 anime_mode="${VICINE_ANIME_MODE:-sub}"
 anime_ep_maps=""
 anime_ep_list=""
+# player_extra: extra player flags (popmovie sets an mpv HLS whitelist
+# so the local stamped playlist may fetch https segments)
+player_extra=""
 download_dir="${VICINE_DOWNLOAD_DIR:-$HOME/Movies}"
 dl_jobs="${VICINE_DL_JOBS:-2}"
 no_detach="${VICINE_NO_DETACH:-0}"
@@ -1607,6 +1693,7 @@ tmpfile=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile2=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile3=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile4=$(mktemp /tmp/VICINE.XXXXXX)
+tmpfile5=$(mktemp /tmp/VICINE.XXXXXX.m3u8)
 trap cleanup EXIT
 trap on_sigint INT
 trap cleanup HUP TERM

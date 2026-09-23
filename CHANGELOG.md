@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Backup provider via `VICINE_PROVIDER=popmovie`: movies and series from
   the popmovie.online TMDB catalog, streams resolved through vidsrc.sh
-  (ChaCha20-wasm decryption via node + per-host JWT stamping). Use when
-  hicine is down.
+  (ChaCha20-wasm decryption via node + per-host JWT stamping; playback
+  pipes the stamped playlist through yt-dlp, no seeking). Use when hicine
+  is down.
 
 ### Fixed
 
