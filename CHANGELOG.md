@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Backup provider via `VICINE_PROVIDER=popmovie`: movies and series from
+  the popmovie.online TMDB catalog, streams resolved through vidsrc.sh
+  (ChaCha20-wasm decryption via node + per-host JWT stamping). Use when
+  hicine is down.
+
 ### Fixed
 
 - Movie quality selection matches the description only — a URL containing

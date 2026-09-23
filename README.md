@@ -33,6 +33,24 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 > MegaPlay-based servers, which can't be resolved by the script — those show
 > "No sources found".
 
+## Backup provider (popmovie)
+
+Set `VICINE_PROVIDER=popmovie` to search movies and series through
+[popmovie.online](https://popmovie.online/) (TMDB catalog) instead of
+hicine, with streams resolved via vidsrc.sh. Good standalone fallback when
+hicine is having a bad day:
+
+```sh
+VICINE_PROVIDER=popmovie vicine "the batman"
+VICINE_PROVIDER=popmovie vicine -q 1080p -D reacher
+```
+
+Notes: episodes resolve per (tmdb id, season, episode); the quality ladder
+is inside the resolved playlist (`-q` is honored by the player, not the
+provider); encrypted stream payloads need `node` (usually already present
+via npm). Trending/recent/stats, anime (`-A`), and the watch history (uses
+TMDB ids) work as usual.
+
 ## Installation
 
 Packaged installs below, or run anywhere via the [one-liner

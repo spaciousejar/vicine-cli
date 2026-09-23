@@ -888,6 +888,7 @@ prompt_action() {
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
+    [ "$provider" = "popmovie" ] && { pop_search "$_query"; return; }
     _encoded=$(henc "$_query")
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
@@ -1293,6 +1294,215 @@ cmd_anime() {
 
     # play loop (control menu)
     anime_play_loop
+}
+
+# ─── Popmovie provider ──────────────────────────────────────────────────────
+# Backup provider (VICINE_PROVIDER=popmovie). Catalog: TMDB through
+# popmovie.online's proxy. Streams: vidsrc.sh's data API
+# (data.vidsrc.sh/api.php) — plain JSON, or a ChaCha20-wasm envelope that
+# needs node to decrypt; every stream host requires a per-host JWT from
+# <host>/generate.php appended as ?token= (IP-bound, ~4h). Episodes resolve
+# per (tmdb id, season, episode).
+
+POP_REF="https://vidsrc.sh/"
+pop_tok=""; pop_tok_host=""
+
+# raw url -> url with the per-host JWT appended (cache one token per host)
+pop_stamp() {
+    _h="$(printf '%s\n' "$1" | sed -E 's#(https?://[^/]+).*#\1#')"
+    if [ "$_h" != "$pop_tok_host" ]; then
+        pop_tok="$(curl -sL --max-time 10 -A "$anime_agent" "$_h/generate.php")"
+        pop_tok_host="$_h"
+    fi
+    [ -z "$pop_tok" ] && { printf '%s\n' "$1"; return; }
+    case "$1" in
+        *__TOKEN__*) printf '%s\n' "$1" | sed "s|__TOKEN__|$pop_tok|" ;;
+        *)           printf '%s\n' "$1" | sed "s|$|?token=$pop_tok|" ;;
+    esac
+}
+
+# api.php response -> line-delimited raw stream URLs (decrypts via node)
+pop_streams() {
+    _resp="$1"
+    if printf '%s' "$_resp" | jq -e '.data.stream_urls | type == "array"' >/dev/null 2>&1; then
+        printf '%s' "$_resp" | jq -r '.data.stream_urls[]'
+        return
+    fi
+    command -v node >/dev/null 2>&1 || { warn "popmovie encrypted streams need node"; return 1; }
+    VSRESP="$_resp" node -e '
+      const j = JSON.parse(process.env.VSRESP);
+      const s = j.data.stream_urls;
+      if (Array.isArray(s)) { console.log(s.join("\n")); process.exit(0); }
+      if (!j.vs) process.exit(1);
+      const bytes = async () => j.vs.wasm_url
+        ? (await fetch(j.vs.wasm_url, { credentials: "omit" })).arrayBuffer()
+        : Buffer.from(j.vs.wasm, "base64");
+      (async () => {
+        const mod = await WebAssembly.compile(await bytes());
+        const ex = (await WebAssembly.instantiate(mod, {})).exports;
+        const raw = Buffer.from(s, "base64");
+        const ptr = ex.alloc(raw.length);
+        new Uint8Array(ex.memory.buffer, ptr, raw.length).set(raw);
+        const len = ex.decrypt(ptr, raw.length);
+        console.log(new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ptr + 12, len)));
+        process.exit(0);
+      })().catch(() => process.exit(1));'
+}
+
+# (type,id[,season,episode]) -> stamped master URL (first = best)
+pop_resolve() {
+    _t="$1"; _id="$2"; _api="https://data.vidsrc.sh/api.php?type=${_t}&tmdb=${_id}"
+    [ "$_t" = "tv" ] && _api="${_api}&season=$3&episode=$4"
+    _api="${_api}&stream_urls"
+    _resp="$(curl -sL --max-time 20 -A "$anime_agent" -e "$POP_REF" "$_api")" || return 1
+    [ -z "$_resp" ] && return 1
+    _urls="$(pop_streams "$_resp")" || return 1
+    [ -z "$_urls" ] && return 1
+    pop_stamp "$(printf '%s\n' "$_urls" | head -1)"
+}
+
+pop_play_ep() { # id season ep title — resolve + play/download one episode
+    _id="$1"; _sn="$2"; _ep="$3"; _title="$4"
+    _u="$(pop_resolve tv "$_id" "$_sn" "$_ep")" || { warn "No stream for S${_sn}E${_ep}."; return 1; }
+    [ -z "$_u" ] && { warn "No stream for S${_sn}E${_ep}."; return 1; }
+    if [ "$download_all_mode" = 1 ]; then
+        _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        do_download "$_u" "${_safe}/season-${_sn}/S${_sn}E$(printf '%02d' "$_ep")" "$POP_REF"
+        return $?
+    fi
+    info "Playing S${_sn}E${_ep}: ${_title}"
+    play_url "$_u" "${_title} - S${_sn}E${_ep}" "$POP_REF"
+    _rc=$?
+    update_history "$_id" "$_title" series "$_sn" "$_ep"
+    [ "$exit_after_play" = 1 ] && exit "$_rc"
+}
+
+pop_series() { # id title
+    _id="$1"; _title="$2"
+    _det="$(curl -sL --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/tv/${_id}")"
+    [ -z "$_det" ] && { warn "Details failed."; return 1; }
+    _sc="$(printf '%s' "$_det" | jq -r '[.seasons[] | select(.season_number > 0)] | length' 2>/dev/null)"
+    [ "${_sc:-0}" -gt 0 ] 2>/dev/null || { warn "No season data."; return 1; }
+    if [ -n "$resume_season" ] && [ "$resume_season" -le "$_sc" ] 2>/dev/null; then
+        _sn="$resume_season"
+    elif [ "$_sc" -eq 1 ]; then
+        _sn=1
+    else
+        printf "" > "$tmpfile3"; _i=1
+        while [ "$_i" -le "$_sc" ]; do printf "Season %s\n" "$_i" >> "$tmpfile3"; _i=$(( _i + 1 )); done
+        _sp=$(menu "Seasons for ${_title}: " < "$tmpfile3") || return 1
+        _sn=$(printf "%s" "$_sp" | grep -o '[0-9]*')
+    fi
+    [ -z "$_sn" ] && return 1
+    _eps_json="$(curl -sL --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/tv/${_id}/season/${_sn}")"
+    _ep_list="$(printf '%s' "$_eps_json" | jq -r '.episodes[]? | .episode_number')"
+    [ -z "$_ep_list" ] && { warn "No episodes in season $_sn."; return 1; }
+    _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
+
+    # download-all: pick a range (TTY) or everything, then fetch sequentially
+    if [ "$download_all_mode" = 1 ]; then
+        _dl_from=""; _dl_to=""
+        if [ -t 0 ]; then
+            printf "\n  Episode range to download (e.g. 1-$_ep_total, empty = all): "
+            read -r _dl_range
+            [ -n "$_dl_range" ] && _dl_from=$(printf '%s' "$_dl_range" | grep -oE '[0-9]+' | head -1) && _dl_to=$(printf '%s' "$_dl_range" | grep -oE '[0-9]+' | tail -1)
+        fi
+        printf '%s\n' "$_ep_list" | awk -v f="$_dl_from" -v t="$_dl_to" '{ if (f != "" && $1 < f) next; if (t != "" && $1 > t) next; print }' | while IFS= read -r _epn; do
+            pop_play_ep "$_id" "$_sn" "$_epn" "$_title"
+        done
+        return
+    fi
+
+    # single play: -e / resume / menu
+    case "$requested_eps" in
+        "" ) if [ -n "$resume_ep" ]; then
+                _cur_ep="$resume_ep"
+             else
+                printf "" > "$tmpfile3"
+                printf '%s' "$_eps_json" | jq -r '.episodes[] | "Ep " + (.episode_number|tostring) + "  " + (.name // "")' >> "$tmpfile3"
+                _p=$(menu "Episodes (Season $_sn): " < "$tmpfile3") || return 1
+                _cur_ep=$(printf "%s" "$_p" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
+             fi ;;
+        -1 ) _cur_ep=$(printf '%s\n' "$_ep_list" | tail -1) ;;
+        *-* ) _cur_ep=$(printf '%s' "$requested_eps" | grep -oE '[0-9]+' | head -1)
+              _rend=$(printf '%s' "$requested_eps" | grep -oE '[0-9]+' | tail -1)
+              [ -z "$_rend" ] && _rend="$_cur_ep" ;;
+        * )  _cur_ep="$requested_eps" ;;
+    esac
+    [ -z "$_cur_ep" ] && return 1
+    if ! printf '%s\n' "$_ep_list" | grep -qx "$_cur_ep"; then
+        warn "Episode $_cur_ep not available."; return 1
+    fi
+
+    while true; do
+        pop_play_ep "$_id" "$_sn" "$_cur_ep" "$_title"
+        _rc=$?
+        [ "$_rc" -ge 130 ] && return "$_rc"
+        # range auto-advance
+        if [ -n "$_rend" ]; then
+            if [ "$_cur_ep" -lt "$_rend" ]; then _cur_ep=$(( _cur_ep + 1 )); continue
+            else _rend=""; fi
+        fi
+        [ "$exit_after_play" = 1 ] && return 0
+        printf "" > "$tmpfile3"
+        printf "replay\n" >> "$tmpfile3"
+        [ "$_cur_ep" -gt 1 ] && printf "previous\n" >> "$tmpfile3"
+        [ "$_cur_ep" -lt "$_ep_total" ] && printf "next\n" >> "$tmpfile3"
+        printf "select\nquit\n" >> "$tmpfile3"
+        _c=$(menu "S${_sn}E${_cur_ep} ${_title}: " < "$tmpfile3") || break
+        case "$_c" in
+            next)     _cur_ep=$(( _cur_ep + 1 )) ;;
+            previous) _cur_ep=$(( _cur_ep - 1 )) ;;
+            replay)   : ;;
+            select)
+                printf "" > "$tmpfile3"
+                printf '%s' "$_eps_json" | jq -r '.episodes[] | "Ep " + (.episode_number|tostring) + "  " + (.name // "")' >> "$tmpfile3"
+                _p=$(menu "Select episode: " < "$tmpfile3") || break
+                _cur_ep=$(printf "%s" "$_p" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
+                ;;
+            *) break ;;
+        esac
+    done
+}
+
+pop_movie() { # id title
+    _id="$1"; _title="$2"
+    _u="$(pop_resolve movie "$_id")" || { warn "No stream found."; return 1; }
+    [ -z "$_u" ] && { warn "No stream found."; return 1; }
+    if [ "$download_all_mode" = 1 ] || [ "$player_function" = "download" ]; then
+        _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        do_download "$_u" "$_safe" "$POP_REF"
+        return $?
+    fi
+    info "Playing: $_title"
+    play_url "$_u" "$_title" "$POP_REF"
+    _rc=$?
+    update_history "$_id" "$_title" movie 0 0
+    [ "$exit_after_play" = 1 ] && exit "$_rc"
+}
+
+pop_search() {
+    _query="$1"
+    [ -z "$_query" ] && die "Missing search query"
+    _enc=$(henc "$_query")
+    info "Searching (popmovie): $_query"
+    if ! curl -sf --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/search/multi?query=${_enc}" -o "$tmpfile"; then
+        warn "popmovie API unreachable."; return 1
+    fi
+    jq -c '[.results[] | {title: (.title // .name // "Untitled"), contentType: (if .media_type == "tv" then "series" elif .media_type == "movie" then "movie" else empty end), url_slug: (.id|tostring), date: (.release_date // .first_air_date // "")} | select(.contentType != "")]' "$tmpfile" > "$tmpfile.tmp" && mv "$tmpfile.tmp" "$tmpfile"
+    if ! jq -e 'length > 0' "$tmpfile" >/dev/null 2>&1; then
+        warn "No results found for: $_query"; return 1
+    fi
+    select_item || { warn "No results found for: $_query"; return 1; }
+    _p_title="$(jq -r '.title // ""' "$tmpfile2")"
+    _p_id="$(jq -r '.url_slug // ""' "$tmpfile2")"
+    _p_type="$(jq -r '.contentType // "movie"' "$tmpfile2")"
+    [ -z "$_p_id" ] && return 1
+    if [ "$info_only" = 1 ] && [ "$download_all_mode" = 0 ]; then
+        printf "  %s\n" "$_p_title"
+        return 0
+    fi
+    if [ "$_p_type" = "series" ]; then pop_series "$_p_id" "$_p_title"; else pop_movie "$_p_id" "$_p_title"; fi
 }
 
 # ─── Self-update ────────────────────────────────────────────────────────────
