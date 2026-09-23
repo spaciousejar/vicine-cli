@@ -526,12 +526,17 @@ do_download() {
     # its own single-level .part staging + resume when given the final path.
     _pt="${_dl_file}.part"
     _yt="--no-warnings --quiet --progress"
+    # local stamped playlist (popmovie) — yt-dlp needs file:// + enable-file-urls
+    _dl_arg="$_url"; _file_flag=""
+    if [ -f "$_url" ]; then
+        _dl_arg="file://$_url"; _file_flag="--enable-file-urls"
+    fi
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+            yt-dlp $_yt $_file_flag --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_dl_arg"
             _rc=$?
         else
-            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
+            yt-dlp $_yt $_file_flag --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_dl_arg"
             _rc=$?
         fi
         # user interrupt (Ctrl-C): stop here — no ffmpeg/curl re-download
@@ -550,10 +555,10 @@ do_download() {
     rm -f "$_pt" "$_pt.part"
     if command -v ffmpeg >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null
+            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_dl_arg" -c copy "$_pt" 2>/dev/null
             _rc=$?
         else
-            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null
+            ffmpeg -y -extension_picky 0 -loglevel error -i "$_dl_arg" -c copy "$_pt" 2>/dev/null
             _rc=$?
         fi
         if [ "$_rc" -ge 130 ]; then
@@ -1832,6 +1837,9 @@ case "$search_mode" in
     download_all)
         [ -z "$query" ] && die "Missing query"
         cmd_search "$query"
+        # popmovie handles -D inside pop_search; don't fall through to
+        # hicine's download-all on an empty/selected item
+        [ "$provider" = "popmovie" ] && exit 0
         [ ! -f "$tmpfile2" ] && exit 0
         mkdir -p "$download_dir"
 
