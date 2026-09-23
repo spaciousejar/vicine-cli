@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-24
+
 ### Added
 
 - Backup provider via `VICINE_PROVIDER=popmovie`: movies and series from
