@@ -1,0 +1,49 @@
+name: Verify release pins
+
+# After the npm publish workflow completes (success OR failure — a failed
+# pkg-bump commit is exactly what this catches), check that master's
+# packaged pins Formula/, bucket/, flake.nix actually point at the latest
+# release tag. The v1.5.0 pins went stale for days because nothing watched
+# the bump step.
+
+on:
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - name: Packaged pins match the latest tag
+        run: |
+          set -e
+          ver="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          case "$ver" in *[!0-9.]*) echo "bad tag: $ver" >&2; exit 1 ;; esac
+          echo "latest tag: v$ver"
+
+          sha="$(curl -fsSL "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v${ver}.tar.gz" | sha256sum | cut -d' ' -f1)"
+
+          fail=0
+          check() { # file, needle, human label
+              grep -qF "$2" "$1" || { echo "STALE PIN: $3 in $1 (want $2)" >&2; fail=1; }
+          }
+
+          check Formula/vicine.rb   "refs/tags/v${ver}.tar.gz" "version ref"
+          check Formula/vicine.rb   "sha256 \"$sha\""          "formula sha"
+          check bucket/vicine.json  "\"version\": \"$ver\""    "scoop version"
+          check bucket/vicine.json  "\"hash\": \"$sha\""        "scoop hash"
+          check flake.nix           "version = \"$ver\""        "flake version"
+          check flake.nix           "sha256 = \"$sha\""         "flake sha"
+
+          [ "$fail" = 0 ] || { echo "run 'gh workflow run \"Bump packaged versions\"' to fix" >&2; exit 1; }
+          echo "pins OK for v$ver"

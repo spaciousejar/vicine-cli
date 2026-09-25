@@ -11,14 +11,23 @@ permissions:
 jobs:
   self-checks:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # /bin/sh (dash on Debian/Ubuntu, bash on Arch/Fedora) can behave
+        # differently — cf. the bare-`wait` interrupt bug — so every suite
+        # runs under each shell explicitly.
+        shell: [sh, dash, bash]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Shell syntax
-        run: sh -n vicine
+      - name: Syntax (${{ matrix.shell }})
+        run: ${{ matrix.shell }} -n vicine
 
-      - name: Run self-checks
+      - name: Self-checks under ${{ matrix.shell }}
+        env:
+          VICINE: ${{ matrix.shell }} ${{ github.workspace }}/vicine
         run: |
           set -e
-          for t in tests/*.sh; do echo "== $t"; sh "$t"; done
+          for t in tests/*.sh; do echo "== $t"; ${{ matrix.shell }} "$t"; done
