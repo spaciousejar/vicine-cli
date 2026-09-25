@@ -307,8 +307,8 @@ select_item() {
     # Build display list (1-based, like the anime menu): "1  Title  [type]  (year)"
     jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" > "$tmpfile3"
 
-    _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 1
-    [ -z "$_selection" ] && return 1
+    _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 2   # 2 = user cancelled
+    [ -z "$_selection" ] && return 2
 
     # Extract first index from selection (display is 1-based, array is 0-based)
     _idx=$(printf "%s" "$_selection" | awk '{print $1-1}')
@@ -393,6 +393,22 @@ get_episode_name() {
     printf '%s' "$_ep_list" | awk -F '\t' -v n="$_num" '$1==n && $1 ~ /^[0-9]+$/ {printf "Episode %s (%s, %s)\n", $1, $3, $4}'
 }
 
+# Narrow "id<TAB>..." lines to the -e request (N, N-M, -1); echoes the filter
+# result. Used by both -D flows (series + anime) and their confirm counts so
+# the prompt can't disagree with what actually downloads.
+eps_by_request() {
+    _l="$1"; _r="$2"
+    case "$_r" in
+        "")  printf '%s\n' "$_l" ;;
+        -1)  _le="$(printf '%s\n' "$_l" | tail -1 | cut -f1)"
+             printf '%s\n' "$_l" | awk -F'\t' -v l="$_le" '$1==l' ;;
+        *-*) _rs="${_r%-*}"; _re="${_r#*-}"
+             [ "$_re" = "-1" ] && _re="$(printf '%s\n' "$_l" | tail -1 | cut -f1)"
+             printf '%s\n' "$_l" | awk -F'\t' -v s="$_rs" -v e="$_re" '$1>=s && $1<=e' ;;
+        *)   printf '%s\n' "$_l" | awk -F'\t' -v n="$_r" '$1==n' ;;
+    esac
+}
+
 
 # ─── History ──────────────────────────────────────────────────────────────
 
@@ -449,6 +465,7 @@ play_url() {
     _url="$1"
     _name="$2"
     _ref="$3"
+    _player_pid=""   # set only when a player is backgrounded (see episode_loop wait)
     _hdr=""
     [ -n "$_ref" ] && _hdr="--http-header-fields=Referer:$_ref"
     # iina-cli drops raw mpv args placed before the URL; only --mpv-* is honored there
@@ -462,14 +479,14 @@ play_url() {
                 return $?
             fi
             if pgrep -f "IINA" >/dev/null 2>&1; then
-                nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
+                nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
             else
-                nohup $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 &
+                nohup $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
             fi
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup $player_function $player_extra $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 &
+                nohup $player_function $player_extra $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
             else
                 $player_function $player_extra $_hdr --force-media-title="$_name" "$_url"
                 return $?
@@ -485,8 +502,14 @@ play_url() {
                 fi
                 return $?
             fi
-            if [ -n "$_ref" ]; then nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
-            else nohup $player_function "$_url" >/dev/null 2>&1 & fi ;;
+            if [ -n "$_ref" ]; then
+                nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
+                _player_pid=$!
+            else
+                nohup $player_function "$_url" >/dev/null 2>&1 &
+                _player_pid=$!
+            fi
+            ;;
     esac
 }
 
@@ -639,10 +662,17 @@ episode_loop() {
         # Wait for any previous player to close before starting the next one
         [ -n "$_prev_pid" ] && wait "$_prev_pid" 2>/dev/null
 
-        info "Playing ep ${_cur_ep}/${_ep_total}: ${_title}"
+        if [ "$player_function" = "download" ]; then
+            info "Downloading ep ${_cur_ep}/${_ep_total}: ${_title}"
+        else
+            info "Playing ep ${_cur_ep}/${_ep_total}: ${_title}"
+        fi
         play_url "$_resolved" "$_title - $_ep_name"
         _rc=$?
-        _prev_pid=$!
+        _prev_pid="$_player_pid"
+
+        # -d/--download: do_download already saved it — no menu, no history
+        [ "$player_function" = "download" ] && { [ "$_rc" -ge 130 ] && exit "$_rc"; return "$_rc"; }
 
         # Auto-save watch progress
         _slug="${_slug:-$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)}"
@@ -687,9 +717,12 @@ episode_loop() {
                 [ -n "$_pick" ] && _cur_ep=$(printf "%s" "$_pick" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
                 ;;
             change_quality)
-                _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
-                [ -n "$_new_q" ] && quality="$_new_q"
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
+                # offer only the qualities this season actually lists
+                _qq="$(printf "%s\n" "$_season_text" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p' | sort -u)"
+                [ -z "$_qq" ] && _qq=$(printf '480p\n720p\n1080p\n2160p')
+                _new_q=$(printf 'best\n%s\n' "$_qq" | pick_quality_menu "Quality: " || true)
+                [ -n "$_new_q" ] && quality="$_new_q"
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
                 _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
                 ;;
@@ -801,7 +834,11 @@ prompt_action() {
                             info "Season $_sn is a ZIP archive — downloading instead of streaming."
                             _zspec="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
                             mkdir -p "$download_dir"
-                            do_download "$_resolved" "${_zspec}/season-${_sn}/${_label}"
+                            # the label is remote text — flatten it to one
+                            # sanitised path component so it cannot traverse
+                            # out of the download dir via .. or /
+                            _zlabel="$(printf "%s" "${_label##*/}" | sed 's/[^a-zA-Z0-9 ._-]//g')"
+                            do_download "$_resolved" "${_zspec}/season-${_sn}/${_zlabel}"
                             update_history "$_slug" "$_title" series "$_sn" 0
                             return 0
                             ;;
@@ -881,10 +918,17 @@ prompt_action() {
 
     _resolved=$(resolve_stream_url "$_best_url")
     [ -z "$_resolved" ] && warn "Failed to resolve URL." && return 1
-    info "Playing: $_title"
+    if [ "$player_function" = "download" ]; then
+        info "Downloading: $_title"
+    else
+        info "Playing: $_title"
+    fi
     play_url "$_resolved" "$_title"
+    _rc=$?
     # --exit-after-play: play once and return the player's exit code
-    [ "$exit_after_play" = 1 ] && exit $?
+    [ "$exit_after_play" = 1 ] && exit "$_rc"
+    # -d/--download: do_download saved it — no control menu, nothing watched
+    [ "$player_function" = "download" ] && return "$_rc"
 
     # Movie control menu loop
     while true; do
@@ -935,6 +979,11 @@ cmd_search() {
         return
     fi
     if ! select_item; then
+        _sel_rc=$?
+        if [ "$_sel_rc" = 2 ]; then
+            # user cancelled the picker — exit quietly, no provider chain
+            return 0
+        fi
         if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
             warn "Not on server-1 — trying server-2, then server-3."
             _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
@@ -1245,6 +1294,8 @@ cmd_anime() {
 
     # Download-all mode: interactive quality + episode-range pick, then confirm
     if [ "$download_all_mode" = 1 ]; then
+        # honor -e N / N-M / -1 here too, matching the hicine series -D path
+        anime_ep_list="$(eps_by_request "$anime_ep_list" "$requested_eps")"
         _dl_range=""
         if [ -t 0 ]; then
             case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
@@ -1279,6 +1330,7 @@ cmd_anime() {
         fi
         printf "%s\n" "$anime_ep_list" > "$tmpfile3"
         _jobs=0
+        _waitpids=""
         while IFS= read -r _ep; do
             if [ -n "$_rstart" ]; then
                 [ "$_ep" -ge "$_rstart" ] 2>/dev/null || continue
@@ -1287,9 +1339,16 @@ cmd_anime() {
             if [ "$dl_jobs" -gt 1 ]; then
                 quiet_dl=1
                 ( anime_play_episode "$_ep" ) &
+                _waitpids="$_waitpids $!"
                 _jobs=$(( _jobs + 1 ))
-                # dash's `wait` returns the last-finished job's status; ≥130 = interrupt
-                [ "$_jobs" -ge "$dl_jobs" ] && { wait; _rc=$?; _jobs=0; [ "$_rc" -ge 130 ] && exit "$_rc"; }
+                # wait per PID: dash's bare `wait` returns the last job's
+                # status, bash/POSIX return 0 (Ctrl-C would be swallowed there)
+                [ "$_jobs" -ge "$dl_jobs" ] && {
+                    _rc=0
+                    for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                    _waitpids=""; _jobs=0
+                    [ "$_rc" -ge 130 ] && exit "$_rc"
+                }
             else
                 quiet_dl=""
                 anime_play_episode "$_ep"
@@ -1297,8 +1356,9 @@ cmd_anime() {
                 [ "$_rc" -ge 130 ] && exit "$_rc"
             fi
         done < "$tmpfile3"
-        wait
-        _rc=$?
+        _rc=0
+        for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+        _waitpids=""
         [ "$_rc" -ge 130 ] && exit "$_rc"
         return
     fi
@@ -1407,16 +1467,18 @@ pop_m3u8() {
     : > "$tmpfile5"
     printf '%s\n' "$_vpl" | awk -v host="$pop_m3u8_host" -v qs="$pop_m3u8_qs" '
         function stamp(u) {
-            if (u ~ /^https?:\/\//) { if (u ~ /token=/) return u; return u (u ~ /\?/ ? "&" : "?") "token=" qs }
+            if (u ~ /^https?:\/\//) { if (u ~ /token=/) return u; return u (u ~ /\?/ ? "&" : "?") substr(qs, 2) }
             if (u ~ /^\//) { if (u ~ /token=/) return host u; return host u qs }
             if (u ~ /token=/) return "/" u
             return host "/" u qs
         }
         /#EXT-X-KEY:|URI="/ {
-            while (match($0, /URI="[^"]*"/)) {
+            # single rewrite: re-emitting the closing quote makes the match
+            # succeed again, so a while-loop would spin forever on the same URI
+            if (match($0, /URI="[^"]*"/)) {
                 u = substr($0, RSTART+5, RLENGTH-6)
                 s = stamp(u)
-                $0 = substr($0, 1, RSTART+4) s substr($0, RSTART+RLENGTH)
+                $0 = substr($0, 1, RSTART+4) s "\"" substr($0, RSTART+RLENGTH)
             }
             print; next
         }
@@ -1534,9 +1596,12 @@ pop_series() { # id title
             read -r _dl_range
             [ -n "$_dl_range" ] && _dl_from=$(printf '%s' "$_dl_range" | grep -oE '[0-9]+' | head -1) && _dl_to=$(printf '%s' "$_dl_range" | grep -oE '[0-9]+' | tail -1)
         fi
-        printf '%s\n' "$_ep_list" | awk -v f="$_dl_from" -v t="$_dl_to" '{ if (f != "" && $1 < f) next; if (t != "" && $1 > t) next; print }' | while IFS= read -r _epn; do
+        printf '%s\n' "$_ep_list" | awk -v f="$_dl_from" -v t="$_dl_to" '{ if (f != "" && $1 < f) next; if (t != "" && $1 > t) next; print }' > "$tmpfile3"
+        # read from a file, not a pipeline — pop_play_ep may exit (Ctrl-C,
+        # --exit-after-play) and that must reach the parent shell
+        while IFS= read -r _epn; do
             pop_play_ep "$_id" "$_sn" "$_epn" "$_title"
-        done
+        done < "$tmpfile3"
         return
     fi
 
@@ -1621,7 +1686,10 @@ pop_search() {
     if ! jq -e 'length > 0' "$tmpfile" >/dev/null 2>&1; then
         warn "No results found for: $_query"; return 1
     fi
-    select_item || { warn "No results found for: $_query"; return 1; }
+    if ! select_item; then
+        [ $? -eq 2 ] && return 0
+        warn "No results found for: $_query"; return 1
+    fi
     _p_title="$(jq -r '.title // ""' "$tmpfile2")"
     _p_id="$(jq -r '.url_slug // ""' "$tmpfile2")"
     _p_type="$(jq -r '.contentType // "movie"' "$tmpfile2")"
@@ -1740,7 +1808,11 @@ tmpfile=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile2=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile3=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile4=$(mktemp /tmp/VICINE.XXXXXX)
-tmpfile5=$(mktemp /tmp/VICINE.XXXXXX.m3u8)
+# BSD/macOS mktemp needs the X-run as the trailing template suffix, so
+# create then rename instead of /tmp/VICINE.XXXXXX.m3u8
+tmpfile5=$(mktemp /tmp/VICINE.XXXXXX)
+mv -f "$tmpfile5" "${tmpfile5}.m3u8"
+tmpfile5="${tmpfile5}.m3u8"
 trap cleanup EXIT
 trap on_sigint INT
 trap cleanup HUP TERM
@@ -1783,10 +1855,10 @@ while [ $# -gt 0 ]; do
         -i|--info)        [ -z "$search_mode" ] && search_mode="info"; info_only=1 ;;
         -d|--download)    player_function="download" ;;
         -D|--download-all) info_only=1; download_all_mode=1; [ -z "$search_mode" ] && search_mode="download_all" ;;
-        -p|--player)      shift; player_function="$1" ;;
-        -q|--quality)     shift; quality="$1" ;;
-        -e|--episode)     shift; requested_eps="$1" ;;
-        -n|--select-nth)  shift; select_nth="$1" ;;
+        -p|--player)      shift; [ -n "$1" ] || die "Missing value for -p/--player"; player_function="$1" ;;
+        -q|--quality)     shift; [ -n "$1" ] || die "Missing value for -q/--quality"; quality="$1" ;;
+        -e|--episode)     shift; [ -n "$1" ] || die "Missing value for -e/--episode"; requested_eps="$1" ;;
+        -n|--select-nth)  shift; [ -n "$1" ] || die "Missing value for -n/--select-nth"; select_nth="$1" ;;
         -c|--continue)    search_mode="continue" ;;
         -C|--clear-history) search_mode="clear_history" ;;
         --exit-after-play) exit_after_play=1; no_detach=1 ;;
@@ -1797,9 +1869,9 @@ while [ $# -gt 0 ]; do
         --rofi)           menu_program="rofi" ;;
         --dmenu)          menu_program="dmenu" ;;
         --no-detach)      no_detach=1 ;;
-        --download-dir)   shift; download_dir="$1" ;;
-        --page)           shift; browse_page="$1" ;;
-        --limit)          shift; browse_limit="$1" ;;
+        --download-dir)   shift; [ -n "$1" ] || die "Missing value for --download-dir"; download_dir="$1" ;;
+        --page)           shift; [ -n "$1" ] || die "Missing value for --page"; browse_page="$1" ;;
+        --limit)          shift; [ -n "$1" ] || die "Missing value for --limit"; browse_limit="$1" ;;
         help)             help_info ;;
         version)          version_info ;;
         trending|recent|browse|search|info|anime)
@@ -1830,6 +1902,13 @@ esac
 
 # Default to search
 [ -z "$search_mode" ] && search_mode="search"
+
+# -n must be a non-negative integer; hicine jq/anime arithmetic both
+# silently misbehave on anything else. Empty = interactive selection.
+case "$select_nth" in
+    "") : ;;
+    *[!0-9]*) die "--select-nth must be a non-negative integer" ;;
+esac
 
 # -D wins over -i regardless of flag order, except for -D -A: anime
 # download-all is handled inside cmd_anime, so keep search_mode="anime"
@@ -1944,6 +2023,7 @@ case "$search_mode" in
                 _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
                 if [ -n "$_season_text" ] && _season_selected "$_si"; then
                     _ep_list=$(parse_episodes "$_season_text" "$quality")
+                    _ep_list="$(eps_by_request "$_ep_list" "$requested_eps")"
                     _n=$(printf '%s\n' "$_ep_list" | grep -c . || true)
                     _total=$(( _total + _n ))
                 fi
@@ -1961,22 +2041,15 @@ case "$search_mode" in
                 _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
                 _ep_list=""
                 [ -n "$_season_text" ] && _season_selected "$_si" && _ep_list=$(parse_episodes "$_season_text" "$quality")
-                # honor -e N / N-M / -1 inside -D (episode_loop parity); an
-                # ignored -e previously downloaded the whole season silently
-                case "$requested_eps" in
-                    "") ;;
-                    -1) _le="$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)"
-                        _ep_list="$(printf '%s\n' "$_ep_list" | awk -F'\t' -v l="$_le" '$1==l')" ;;
-                    *-*) _rs="${requested_eps%-*}"; _re="${requested_eps#*-}"
-                        [ "$_re" = "-1" ] && _re="$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)"
-                        _ep_list="$(printf '%s\n' "$_ep_list" | awk -F'\t' -v s="$_rs" -v e="$_re" '$1>=s && $1<=e')" ;;
-                    *)  _ep_list="$(printf '%s\n' "$_ep_list" | awk -F'\t' -v n="$requested_eps" '$1==n')" ;;
-                esac
+                # honor -e N / N-M / -1 inside -D (episode_loop parity); the
+                # same narrowing fed the confirm count above
+                _ep_list="$(eps_by_request "$_ep_list" "$requested_eps")"
                 if [ -n "$_ep_list" ]; then
                     # read from a file (not a pipeline) so background jobs and
                     # wait work in the current shell for parallel downloads
                     printf '%s\n' "$_ep_list" > "$tmpfile3"
                     _jobs=0
+                    _waitpids=""
                     while IFS='	' read -r _num _url _qual _size; do
                         _enum=$(printf '%02d' "$_num")
                         if [ "$dl_jobs" -gt 1 ]; then
@@ -1991,8 +2064,16 @@ case "$search_mode" in
                               fi
                               do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
                             ) &
+                            _waitpids="$_waitpids $!"
                             _jobs=$(( _jobs + 1 ))
-                            [ "$_jobs" -ge "$dl_jobs" ] && { wait; _rc=$?; _jobs=0; [ "$_rc" -ge 130 ] && exit "$_rc"; }
+                            # wait on each PID individually: dash's bare `wait`
+                            # returns the last job's status, bash/POSIX return 0
+                            [ "$_jobs" -ge "$dl_jobs" ] && {
+                                _rc=0
+                                for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                                _waitpids=""; _jobs=0
+                                [ "$_rc" -ge 130 ] && exit "$_rc"
+                            }
                         else
                             quiet_dl=""
                             _r="$(resolve_stream_url "$_url")"
@@ -2005,8 +2086,9 @@ case "$search_mode" in
                             [ "$_rc" -ge 130 ] && exit "$_rc"
                         fi
                     done < "$tmpfile3"
-                    wait
-                    _rc=$?
+                    _rc=0
+                    for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                    _waitpids=""
                     [ "$_rc" -ge 130 ] && exit "$_rc"
                 fi
                 _si=$(( _si + 1 ))
@@ -2036,7 +2118,10 @@ case "$search_mode" in
                         warn "No matching title on hianime — missing episodes stay missing."
                     else
                         anime_id="$(printf '%s' "$_amatch" | cut -f 1)"
-                        anime_title="$(printf '%s' "$_amatch" | cut -f 2)"
+                        # keep the hicine title for the destination folder, else
+                        # the retry lands in a differently-named directory and
+                        # the gap never closes (anime_title drives _safe)
+                        anime_title="$_title"
                         anime_ep_maps="$(anidb_episodes "$anime_id")"
                         if [ -n "$anime_ep_maps" ]; then
                             for _ep in $_missing; do

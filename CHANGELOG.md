@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Picker **cancel (ESC)** no longer triggers the server-2/server-3 fallback
+  chain — a cancelled search exits quietly (issues #11).
+- `-A -D` honours `-e N / N-M / -1` like the hicine `-D` path, and the
+  `-D -e` confirm count matches what will actually download (#9, #10).
+- Parallel bulk `-D` interrupts work under bash: workers are awaited by PID
+  instead of dash-only bare `wait` (#12).
+- `-d` downloads exit after saving — no playback menu, no watch-history
+  entry, no misleading "Playing:" line (#8).
+- `episode_loop` waits only on the PID a player truly backgrounded — a stale
+  `$!` is no longer awaited after foreground/`-d` runs (#16).
+- popmovie `pop_m3u8`: absolute segment URIs no longer get a doubled
+  `?token=?token=`, and `#EXT-X-KEY` rewrites keep the closing quote, fixing
+  AES-128 streams (#6, #7).
+- popmovie `pop_series` `-D` reads from a file, not a pipeline, so
+  `--exit-after-play` / Ctrl-C terminate the run (#18).
+- Season-ZIP labels from the API are flattened to one sanitised component —
+  no path traversal out of the download dir (#14).
+- `-p/-q/-e/-n/--download-dir/--page/--limit` reject a missing operand, and
+  `-n` must be an integer (#19, #15).
+- `tmpfile5` creation is BSD/macOS-safe (`mktemp` + rename) (#20).
+- `-D` hianime gap-fill writes into the same hicine-named folder, so missing
+  episodes actually land where the gap is (#21).
+- Series `change_quality` lists the season's real qualities instead of a
+  hardcoded 480p/720p/1080p/2160p (#22).
+
 ## [1.5.0] - 2026-09-24
 
 ### Added
