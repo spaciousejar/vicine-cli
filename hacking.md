@@ -54,9 +54,11 @@ no frameworks.
 
 ## Architecture notes
 
-- State lives in four `mktemp` files: `tmpfile` = search JSON,
+- State lives in five `mktemp` files: `tmpfile` = search JSON,
   `tmpfile2` = selected item, `tmpfile3` = menu lists, `tmpfile4` = player
-  log. An EXIT trap cleans them and preserves the exit code; Ctrl-C is 130.
+  log, `tmpfile5` = popmovie's rewritten `.m3u8` playlist (created via
+  `mktemp` + rename so BSD/macOS accepts it). An EXIT trap cleans them and
+  preserves the exit code; Ctrl-C is 130.
 - Exit codes matter: `die` → 1, interrupts → 130, player exit codes pass
   through with `--exit-after-play`.
 - Quality is normalized lowercase and `4k` → `2160p` before any matching.
