@@ -20,6 +20,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # tag pushes land on a detached HEAD, where git-auto-commit-action
+          # cannot commit — always work on the default branch instead
+          ref: master
 
       - name: Resolve version
         run: |
