@@ -1882,6 +1882,14 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# -n must be a non-negative integer; jq/arithmetic misbehave on anything
+# else. Validated before the dep checks so a missing menu program can't
+# mask the real usage error (and empty = interactive selection).
+case "$select_nth" in
+    "") : ;;
+    *[!0-9]*) die "--select-nth must be a non-negative integer" ;;
+esac
+
 # Deps check
 dep_ch "sed"
 dep_ch "grep"
@@ -1902,13 +1910,6 @@ esac
 
 # Default to search
 [ -z "$search_mode" ] && search_mode="search"
-
-# -n must be a non-negative integer; hicine jq/anime arithmetic both
-# silently misbehave on anything else. Empty = interactive selection.
-case "$select_nth" in
-    "") : ;;
-    *[!0-9]*) die "--select-nth must be a non-negative integer" ;;
-esac
 
 # -D wins over -i regardless of flag order, except for -D -A: anime
 # download-all is handled inside cmd_anime, so keep search_mode="anime"
