@@ -28,17 +28,20 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Download** with yt-dlp, ffmpeg, or curl
 - **Series support** — season/episode navigation with next/previous/replay controls
 - **Anime support** — dub/sub audio via hianime.at
+- **Automatic provider fallback** — when the primary catalogue (server-1)
+  has no result or is down, the search falls back to the popmovie backup
+  (server-2), then the hianime anime catalogue (server-3)
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer
 > MegaPlay-based servers, which can't be resolved by the script — those show
 > "No sources found".
 
-## Backup provider (popmovie)
+## Backup provider (server-2, popmovie)
 
-Set `VICINE_PROVIDER=popmovie` to search movies and series through
-[popmovie.online](https://popmovie.online/) (TMDB catalog) instead of
-hicine, with streams resolved via vidsrc.sh. Good standalone fallback when
-hicine is having a bad day:
+The popmovie catalogue (TMDB + vidsrc.sh streams) is the **automatic
+fallback**: if a server-1 search returns nothing, or the hicine API is
+unreachable, vicine retries the title there before the anime catalogue.
+It can also be forced as the sole provider:
 
 ```sh
 VICINE_PROVIDER=popmovie vicine "the batman"
@@ -121,7 +124,9 @@ sudo cp vicine /usr/local/bin/vicine
 ### Updating
 
 - Installed via npm: `npm update -g vicine`
-- Installed via AUR: `yay -S vicine` (or a regular `pacman -Syu` once installed)
+- Installed via AUR: `yay -S vicine` / `paru -S vicine` — **do not use
+  `vicine -U`**: `/usr/bin/vicine` is root-owned and pacman-managed, so the
+  self-update cannot (and should not) write it
 - Installed via Homebrew: `brew trust spaciousejar/vicine-cli && brew upgrade vicine`
 - Installed via Nix: `nix profile upgrade github:spaciousejar/vicine-cli`
 - Installed via script/git: `vicine -U` (self-update from GitHub, upgrade-only)
@@ -146,9 +151,10 @@ Releases are fully automated — one tag push is enough:
 
 ```sh
 # bump the version in `vicine` (version_number), `package.json`, and the
-# CHANGELOG (move [Unreleased] to a dated release section); commit, then:
-git tag -a v1.3.0 -m "v1.3.0"
-git push origin v1.3.0
+# CHANGELOG (move [Unreleased] to a dated release section); run the
+# self-checks (`sh tests/*.sh`); commit, then:
+git tag -a v1.5.0 -m "v1.5.0"
+git push origin v1.5.0
 ```
 
 `.github/workflows/publish.yml` then:
@@ -161,7 +167,13 @@ Publishing the release triggers [`.github/workflows/aur.yml`](.github/workflows/
 [`.github/workflows/pkg-bump.yml`](.github/workflows/pkg-bump.yml) keeps the
 repo-hosted packages current: on every release it rewrites the version and
 checksum pins in the Homebrew formula (`Formula/vicine.rb`), the Scoop
-manifest (`bucket/vicine.json`), and the Nix flake (`flake.nix`).
+manifest (`bucket/vicine.json`), and the Nix flake (`flake.nix`). It works
+on `master` (not the tag ref) so its auto-commit can push.
+
+[`.github/workflows/release-verify.yml`](.github/workflows/release-verify.yml)
+then fails loudly if those pins didn't advance to the new tag, and
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the
+self-checks (under `sh`, `dash` and `bash`) on every push and PR.
 
 > Debian/Ubuntu (PPA): `.github/workflows/ppa.yml` builds and uploads a
 > source package to `ppa:spaciousejar/vicine` on launchpad.net (needs the
@@ -205,8 +217,9 @@ vicine -n 1 batman             # Play 2nd search result (non-interactive)
 vicine "jujutsu kaisen"        # Search movies/series via hicine; falls back to hianime.at
 vicine -A one piece            # Search anime directly on hianime.at
 vicine anime "one piece"       # Bare `anime` keyword — same as -A
-vicine -A --dub -e 3 "jujutsu kaisen"  # Anime ep 3, dubbed
+vicine -A --dub -e 3 "jujutsu kaisen"  # Anime ep 3, dubbed (dub is the default)
 vicine -D -A "one piece"       # Download every episode of an anime
+vicine -D -e 3-8 "stranger things"  # Download only eps 3-8 of a series
 vicine -i batman               # Show info only (no play)
 ```
 
@@ -221,13 +234,13 @@ default 2). Movies keep the flat layout.
 | `anime` | Bare keyword alias for `-A` (search anime via hianime.at) |
 | `-s`, `--search` | Search movies/series/anime |
 | `-A`, `--anime` | Search anime via hianime.at |
-| `--dub` / `--sub` | Dub/sub audio for anime (default sub) |
+| `--dub` / `--sub` | Dub/sub audio for anime (default dub; `VICINE_ANIME_MODE=sub` to switch) |
 | `-t`, `--trending` | Show trending content |
 | `-r`, `--recent` | Show recently added |
 | `-b`, `--browse` | Browse a collection |
 | `-S`, `--stats` | Show catalogue stats |
 | `-q`, `--quality` | Select quality (`best`, `480p`, `720p`, `1080p`, `2160p`; `4K` accepted as an alias) |
-| `-e`, `--episode` | Play episode `N`, range `N-M`, or `-1` (latest) |
+| `-e`, `--episode` | Play episode `N`, range `N-M`, or `-1` (latest); also limits `-D` downloads |
 | `-c`, `--continue` | Continue from watch history |
 | `-C`, `--clear-history` | Clear watch history |
 | `-n`, `--select-nth` | Select result by index N (non-interactive) |
@@ -253,7 +266,8 @@ default 2). Movies keep the flat layout.
   `1080p`, `2160p`; `4K` is accepted as an alias).
 - **Where do downloads go?** `~/Movies/<Title>/season-N/` by default; set
   `VICINE_DOWNLOAD_DIR` to change it. Movies keep the flat layout.
-- **Can I watch dubbed anime?** Yes — `--dub` (default is subtitled).
+- **Can I watch dubbed anime?** Yes — dub is the default; use `--sub` (or
+  `VICINE_ANIME_MODE=sub`) for subtitled Japanese.
 - **Can I use VLC or IINA instead of mpv?** Yes — `-p vlc` / `-p iina`, or
   set `VICINE_PLAYER`.
 - **How do I download a whole series or anime?** `-D` downloads every
@@ -263,9 +277,10 @@ default 2). Movies keep the flat layout.
 - **A title shows "No sources found"** — that server is MegaPlay-based and
   can't be resolved by the script; see the note under
   [Features](#features).
-- **How do I update?** `npm update -g vicine`, `yay -S vicine`, or `vicine
-  -U` for script installs. If something breaks, update first — stale
-  versions hit retired provider endpoints.
+- **How do I update?** `npm update -g vicine`, `yay -S vicine` / `paru -S
+  vicine` (AUR), `brew upgrade vicine`, or `vicine -U` for script installs.
+  If something breaks, update first — stale versions hit retired provider
+  endpoints.
 
 ## Contributing
 
