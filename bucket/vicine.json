@@ -6,7 +6,8 @@
     "depends": [
         "git",
         "jq",
-        "fzf"
+        "fzf",
+        "yt-dlp"
     ],
     "url": "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.5.0.tar.gz",
     "hash": "32c8622dfa133355c3b07302b036148aef7d65fbbe43e4a463252d36bcef77f3",

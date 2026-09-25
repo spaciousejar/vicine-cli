@@ -6,7 +6,7 @@
 #   ./install.sh --no-deps           -> install script only
 # one-liner: curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/install.sh | sh
 
-deps="curl jq fzf mpv"
+deps="curl jq fzf mpv yt-dlp"
 
 install_deps() {
     case "$(uname -s)" in

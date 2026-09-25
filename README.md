@@ -187,12 +187,13 @@ self-checks (under `sh`, `dash` and `bash`) on every push and PR.
 
 | Required | Optional |
 |----------|----------|
-| `curl` | `yt-dlp` or `ffmpeg` (for downloads) |
+| `curl` | `ffmpeg` (fallback downloader when yt-dlp is absent) |
 | `jq` | `vlc` |
 | `sed`, `grep`, `awk` | `iina` (macOS) |
 | `base64`, `od` (anime provider) | |
 | `fzf` (or `rofi`/`dmenu`) | |
 | `mpv` (or `iina` on macOS) | |
+| `yt-dlp` (downloads) | |
 
 ## Usage
 

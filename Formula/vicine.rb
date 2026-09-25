@@ -7,6 +7,7 @@ class Vicine < Formula
 
   depends_on "fzf"
   depends_on "jq"
+  depends_on "yt-dlp"   # primary downloader; ffmpeg stays an optional fallback
   # vicine's default player on macOS is IINA; brew skips the cask
   # automatically when IINA is already installed. Add your own player
   # (e.g. mpv via `brew install mpv`, or use -p vlc) if IINA is unwanted.

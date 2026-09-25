@@ -22,8 +22,11 @@
             };
 
             dontBuild = true;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
             installPhase = ''
               install -Dm755 "vicine-cli-${version}/vicine" "$out/bin/vicine"
+              wrapProgram "$out/bin/vicine" \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.curl pkgs.jq pkgs.fzf pkgs.mpv pkgs.yt-dlp ]}
             '';
 
             meta = with pkgs.lib; {
