@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  self-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Shell syntax
+        run: sh -n vicine
+
+      - name: Run self-checks
+        run: |
+          set -e
+          for t in tests/*.sh; do echo "== $t"; sh "$t"; done
