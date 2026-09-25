@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The anime episode picker maps the display row back to the real episode
+  number — non-contiguous hianime numbering (0-specials, season 2 starting
+  at 13) no longer plays the wrong episode or misreports "not available"
+  (#5).
+- `_stage_ok` also rejects JSON and plain-text error bodies
+  (`{"error":…}`, `Access denied`, `Not Found`, `Forbidden`) returned with
+  a 200, not just HTML/XML pages (#23).
+
+### Fixed
+
 - Picker **cancel (ESC)** no longer triggers the server-2/server-3 fallback
   chain — a cancelled search exits quietly (issues #11).
 - `-A -D` honours `-e N / N-M / -1` like the hicine `-D` path, and the

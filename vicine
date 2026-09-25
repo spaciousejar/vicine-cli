@@ -515,11 +515,15 @@ play_url() {
 
 # ─── Download ───────────────────────────────────────────────────────────────
 
-# reject downloads that turned out to be HTML/XML error pages
+# reject downloads that turned out to be HTML/XML/JSON/plain error pages
 _stage_ok() {
     [ -s "$1" ] || { rm -f "$1"; return 1; }
     case "$(head -c 16 "$1" 2>/dev/null | tr -d '\000')" in
-        \<\!\ *|\<\!DOCT*|\<html*|\<HTML*|\<\?xml*)
+        # HTML/XML declarations, JSON objects/arrays, and the common plain
+        # text bodies a CDN returns for a 200-with-error-page. No real media
+        # container starts with any of these (ftyp/1A45DFA3/RIFF/OggS/PK are
+        # what real files begin with), so nothing legitimate is rejected.
+        \<\!\ *|\<\!DOCT*|\<html*|\<HTML*|\<\?xml*|[{[]*|"Access denied"*|"Not Found"*|"Not found"*|"Forbidden"*)
             rm -f "$1"
             return 1 ;;
     esac
@@ -1371,7 +1375,11 @@ cmd_anime() {
             else
                 _pick="$(printf "%s\n" "$anime_ep_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select episode: " || true)"
                 [ -z "$_pick" ] && return 0
-                _cur_ep="$(printf "%s" "$_pick" | grep -oE '[0-9]+' | head -1)"
+                # the display line is "<row> <ep>"; map back through the list
+                # so non-contiguous numbering (0, 13, 14, ...) plays ep 14 when
+                # row 3 is picked, not row number 3 (issue #5)
+                _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
+                [ -n "$_cur_ep" ] || return 0
             fi
             ;;
         -1 ) _cur_ep="$(printf "%s\n" "$anime_ep_list" | tail -1)" ;;
