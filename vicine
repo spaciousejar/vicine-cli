@@ -154,7 +154,7 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5" "${tmpfile3}.pre"
     exit "$_exit_code"
 }
 
@@ -2131,6 +2131,9 @@ case "$search_mode" in
                     printf '%s\n' "$_ep_list" > "$tmpfile3"
                     _jobs=0
                     _waitpids=""
+                    _line_no=1
+                    _prefile="${tmpfile3}.pre"
+                    : > "$_prefile"
                     while IFS='	' read -r _num _url _qual _size; do
                         _enum=$(printf '%02d' "$_num")
                         if [ "$dl_jobs" -gt 1 ]; then
@@ -2160,7 +2163,22 @@ case "$search_mode" in
                             }
                         else
                             quiet_dl=""
-                            _r="$(resolve_stream_url "$_url")"
+                            # resolution stalls ~2-3 s/episode (token API +
+                            # redirect + probe); hide it by resolving the NEXT
+                            # episode's URL in the background while this one
+                            # downloads, and reading the prefetch from a file
+                            # (first episode resolves inline)
+                            if [ "$_line_no" -eq 1 ]; then
+                                _r="$(resolve_stream_url "$_url")"
+                            else
+                                _r="$(cat "$_prefile" 2>/dev/null)"
+                            fi
+                            _nl="$(sed -n "$((_line_no + 1))p" "$tmpfile3")"
+                            if [ -n "$_nl" ]; then
+                                _nu="$(printf '%s' "$_nl" | cut -f2)"
+                                ( _pr="$(resolve_stream_url "$_nu")"; printf '%s\n' "$_pr" > "$_prefile" ) &
+                            fi
+                            _line_no=$(( _line_no + 1 ))
                             if [ -z "$_r" ]; then
                                 warn "Episode $_num (S${_si}) unavailable — skipped."
                                 continue
