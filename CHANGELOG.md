@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows yt-dlp's own progress bar (movies already did); parallel is opt-in
   via `VICINE_DL_JOBS`, where per-job bars are suppressed and a
   `[####------] done/total` ASCII tally is shown instead.
-- The `-D` confirm is `[Y/n]`: Enter or `y` downloads, only an explicit
-  `n`/`N` cancels.
+- The `-D` confirm is `[Y/n]`: Enter or `y` downloads, anything else cancels; empty or
+  `y`/`Y` downloads.
 
 ## [1.5.1] - 2026-09-26
 

@@ -1350,9 +1350,10 @@ cmd_anime() {
             if [ "$_total" -eq 1 ]; then _ep_label2="episode"; else _ep_label2="episodes"; fi
             printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label2} of '${anime_title}'?${C_RESET} [Y/n] "
             read -r _yn
-            # Enter / y download; only an explicit n/N cancels
+            # Enter or y/Y download; anything else (n, N, junk) cancels
             case "$_yn" in
-                n|N) exit 0 ;;
+                ""|y|Y) : ;;
+                *) exit 0 ;;
             esac
         fi
         printf "%s\n" "$anime_ep_list" > "$tmpfile3"
@@ -2093,9 +2094,10 @@ case "$search_mode" in
             printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [Y/n] "
             if [ -t 0 ]; then
                 read -r _yn
-                # Enter / y download; only an explicit n/N cancels
+                # Enter or y/Y download; anything else (n, N, junk) cancels
                 case "$_yn" in
-                    n|N) exit 0 ;;
+                    ""|y|Y) : ;;
+                    *) exit 0 ;;
                 esac
             fi
 
