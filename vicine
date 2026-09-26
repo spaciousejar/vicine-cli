@@ -557,7 +557,8 @@ do_download() {
     # per episode. Only hard rejections short-circuit; every other outcome
     # (timeout, range-averse server) keeps the old path. ponytail: assumes the
     # source tolerates Range — streaming CDNs all do; revisit if a real source
-    # starts 200ing ranges but 403ing full GETs.
+    # starts 200ing ranges but 403ing full GETs, or at the next audit pass
+    # (audit.yml opens one monthly).
     case "$_url" in
         http://*|https://*)
             if [ -n "$_ref" ]; then
