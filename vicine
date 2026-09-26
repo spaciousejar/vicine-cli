@@ -1899,8 +1899,8 @@ case "$(uname -s)" in
         ;;
 esac
 
-# Non-terminal fallback
-if [ ! -t 0 ]; then
+# Non-terminal fallback (only when the user didn't force a menu program)
+if [ ! -t 0 ] && [ -z "${VICINE_MENU:-}" ]; then
     command -v dmenu >/dev/null && menu_program=dmenu
     command -v rofi >/dev/null && menu_program=rofi
     # Non-interactive: use first result automatically
