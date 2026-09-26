@@ -984,9 +984,11 @@ prompt_action() {
         case "$_ctrl" in
             replay)             _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
             change_quality)
-                _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
-                [ -n "$_new_q" ] && quality="$_new_q"
                 _parsed="$(parse_links "$_links")"
+                _ql="$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u)"
+                [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
+                _new_q=$(printf '%s\n' "$_ql" | pick_quality_menu "Quality: " || true)
+                [ -n "$_new_q" ] && quality="$_new_q"
                 _best_url=$(movie_best_url "$_parsed")
                 if [ "$quality" != "best" ]; then
                     _q_match=$(movie_quality_url "$_parsed" "$quality")
