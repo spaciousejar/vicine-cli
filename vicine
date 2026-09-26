@@ -752,7 +752,7 @@ episode_loop() {
                 # offer only the qualities this season actually lists
                 _qq="$(printf "%s\n" "$_season_text" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p' | sort -u)"
                 [ -z "$_qq" ] && _qq=$(printf '480p\n720p\n1080p\n2160p')
-                _new_q=$(printf 'best\n%s\n' "$_qq" | pick_quality_menu "Quality: " || true)
+                _new_q=$(printf '%s\n' "$_qq" | pick_quality_menu "Quality: " || true)
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
                 _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
