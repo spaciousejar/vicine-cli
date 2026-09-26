@@ -535,12 +535,19 @@ _stage_ok() {
     return 0
 }
 
-# bulk -D progress: one updating line per completed episode/batch
+# bulk -D progress: one updating line per completed episode/batch. The
+# parallel jobs suppress their own yt-dlp bars (they'd stomp the same
+# terminal line), so this ASCII bar is the live progress there; serial
+# (dl_jobs=1) shows yt-dlp's bar instead.
 _dl_progress() {
     _done="$1"; _total="$2"
     [ -n "$_total" ] && [ "$_total" -gt 0 ] 2>/dev/null || return 0
     _pct=$(( _done * 100 / _total ))
-    info "${_done}/${_total} (${_pct}%)"
+    _bw=20
+    _fill=$(( _done * _bw / _total ))
+    _filled="$(printf '%*s' "$_fill" '' | tr ' ' '#')"
+    _empty="$(printf '%*s' "$(( _bw - _fill ))" '')"
+    info "[${_filled}${_empty}] ${_done}/${_total} (${_pct}%)"
 }
 
 do_download() {
