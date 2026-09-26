@@ -623,6 +623,14 @@ do_download() {
             ok "Saved: $_dl_file"
             return 0
         fi
+        # yt-dlp occasionally finishes the download but fails its own final
+        # .part→final rename (ENOENT — its rename retry only covers
+        # EACCES/EINVAL), then exits non-zero with a complete .part still on
+        # disk. Promote it instead of discarding a finished file: only when
+        # it is substantial and not an error page.
+        if [ "$_rc" -ne 0 ] && [ -s "$_pt" ] && [ "$(stat -c%s "$_pt" 2>/dev/null)" -gt 10485760 ] && _stage_ok "$_pt"; then
+            mv -f "$_pt" "$_dl_file" 2>/dev/null && { ok "Saved: $_dl_file (yt-dlp .part recovery)"; return 0; }
+        fi
         rm -f "$_dl_file"
     fi
     # fallbacks don't resume — start clean
