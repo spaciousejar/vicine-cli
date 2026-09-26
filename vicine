@@ -269,7 +269,12 @@ henc() {
 # Filename-safe form of a title (canonical helper; was inline at the
 # call sites)
 sanitize() {
-    printf "%s" "$1" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_'
+    # strip only filesystem-hostile chars so non-Latin titles (Hindi,
+    # Japanese, ...) keep their script; degenerate all-hostile titles
+    # fall back to a stable numeric name instead of an empty ".mp4"
+    _t="$(printf "%s" "$1" | sed 's|[/\\*?"<>|]||g' | tr ' ' '_')"
+    [ -n "$_t" ] || _t="vicine_$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+    printf '%s' "$_t"
 }
 
 # Highest-resolution link from parsed "url\tdesc\tsize" lines; falls back to
