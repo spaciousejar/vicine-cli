@@ -1528,6 +1528,13 @@ pop_streams() {
         printf '%s' "$_resp" | jq -r '.data.stream_urls[]'
         return
     fi
+    # the payload must carry either the plain stream list or a wasm
+    # envelope — anything else makes the node decrypt below crash with a
+    # raw stack (a failed/error JSON body from the provider). Fail cleanly.
+    printf '%s' "$_resp" | jq -e 'has("data") or has("vs")' >/dev/null 2>&1 || {
+        warn "popmovie returned an unexpected response."
+        return 1
+    }
     command -v node >/dev/null 2>&1 || { warn "popmovie encrypted streams need node"; return 1; }
     VSRESP="$_resp" node -e '
       const j = JSON.parse(process.env.VSRESP);
