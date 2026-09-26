@@ -350,7 +350,6 @@ show_info() {
         done
     fi
 
-    # Seasons for series
     _i=1
     while [ "$_i" -le 20 ]; do
         _season=$(jq -r ".season_${_i} // empty" "$_f")
@@ -566,14 +565,11 @@ do_download() {
 
     [ -s "$_dl_file" ] && { warn "Already exists: $_dl_file (delete it if a previous download was interrupted)"; return 0; }
 
-    # Fail fast on provider-side dead links (the hicine workers resolver hands
-    # out stale signed URLs whose bucket 403s — line 746's zip-flow probes the
-    # same way). One 1-byte range hit beats the whole yt-dlp→ffmpeg→curl chain
-    # per episode. Only hard rejections short-circuit; every other outcome
+    # Fail fast on provider-side dead links: a 1-byte range probe rejects
+    # 401/403/404/410 before the yt-dlp→ffmpeg→curl chain runs; anything else
     # (timeout, range-averse server) keeps the old path. ponytail: assumes the
-    # source tolerates Range — streaming CDNs all do; revisit if a real source
-    # starts 200ing ranges but 403ing full GETs, or at the next audit pass
-    # (audit.yml opens one monthly).
+    # source tolerates Range; revisit if a real source 200s ranges but 403s
+    # full GETs, or at the next audit pass (audit.yml opens one monthly).
     case "$_url" in
         http://*|https://*)
             if [ -n "$_ref" ]; then
@@ -712,7 +708,6 @@ episode_loop() {
             return "$_rc"
         }
 
-        # Auto-save watch progress
         _slug="${_slug:-$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)}"
         [ -n "$_slug" ] && update_history "$_slug" "$_title" series "$_sn" "$_cur_ep"
 
@@ -729,7 +724,6 @@ episode_loop() {
             fi
         fi
 
-        #control menu
         _sc=$(season_count)
         printf "" > "$tmpfile3"
         printf "replay\n" >> "$tmpfile3"
@@ -811,7 +805,6 @@ prompt_action() {
             _sn=$(printf "%s" "$_season_pick" | grep -o '[0-9]*')
         fi
 
-        # Get episode list for selected season
         _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
         [ -z "$_season_text" ] && warn "No season data." && return 1
         _ep_list=$(parse_episodes "$_season_text" "$quality")
