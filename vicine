@@ -1984,7 +1984,7 @@ esac
 
 # -D wins over -i regardless of flag order, except for -D -A: anime
 # download-all is handled inside cmd_anime, so keep search_mode="anime"
-[ "$download_all_mode" = 1 ] && [ "$search_mode" != "anime" ] && search_mode="download_all"
+[ "$download_all_mode" = 1 ] && case "$search_mode" in ""|search) search_mode="download_all" ;; esac
 
 # Normalize quality: lowercase (480P → 480p...) and 4K/4k → 2160p so -q
 # matches variants everywhere; the anime picker's grep is case-sensitive
