@@ -8,7 +8,9 @@ name: Verify release pins
 
 on:
   workflow_run:
-    workflows: ["Publish to npm"]
+    # the pins are written by pkg-bump; verifying on publish.yml (which runs
+    # in parallel with the bump) races it — trigger after the bump completes
+    workflows: ["Bump packaged versions"]
     types: [completed]
 
 permissions:
