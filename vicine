@@ -266,6 +266,12 @@ henc() {
     printf '%s' "$1" | jq -sRr '@uri'
 }
 
+# Filename-safe form of a title (single canonical helper; replaces the
+# seven inline copies of the same sed|tr pipeline)
+sanitize() {
+    printf "%s" "$1" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_'
+}
+
 # Highest-resolution link from parsed "url\tdesc\tsize" lines; falls back to
 # the last line when no resolution can be parsed from the descriptions.
 movie_best_url() {
@@ -310,9 +316,9 @@ select_item() {
     _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 2   # 2 = user cancelled
     [ -z "$_selection" ] && return 2
 
-    # Extract first index from selection (display is 1-based, array is 0-based)
+    # Extract first index from selection (display is 1-based, array is 0-based);
+    # awk always prints a number, so the result can't be empty here
     _idx=$(printf "%s" "$_selection" | awk '{print $1-1}')
-    [ -z "$_idx" ] && return 1
 
     jq ".[${_idx}]" "$tmpfile" > "$tmpfile2"
 }
@@ -361,11 +367,11 @@ show_info() {
 
 # ─── Action Menu ─────────────────────────────────────────────────────────────
 
-# Check if item is series (has season data)
+# Check if item is series (has season data) — season_count scans the same
+# 1..20 fields, so reuse it instead of a second jq pass.
 is_series() {
     [ -f "$tmpfile2" ] || return 1
-    _s=$(jq -r '[.season_1, .season_2, .season_3, .season_4, .season_5, .season_6, .season_7, .season_8, .season_9, .season_10, .season_11, .season_12, .season_13, .season_14, .season_15, .season_16, .season_17, .season_18, .season_19, .season_20] | map(select(. != null and . != "")) | length' "$tmpfile2")
-    [ "$_s" -gt 0 ] && return 0 || return 1
+    [ "$(season_count)" -gt 0 ]
 }
 
 # Get available seasons count
@@ -431,7 +437,6 @@ cmd_history() {
     _pick=$(menu "Continue (${_count}): " < "$tmpfile3")
     [ -z "$_pick" ] && return 0
     _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
-    [ -z "$_idx" ] && return 0
     _entry=$(sed -n "${_idx}p" "$histfile")
     resume_season=$(printf "%s" "$_entry" | cut -f4)
     resume_ep=$(printf "%s" "$_entry" | cut -f5)
@@ -540,7 +545,7 @@ do_download() {
     _dl_dir="$(dirname "$_name")"
     _dl_name="$(basename "$_name")"
     [ -z "$_dl_dir" ] || [ "$_dl_dir" = "." ] && _dl_dir=""
-    _dl_safe="$(printf "%s" "$_dl_name" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+    _dl_safe="$(sanitize "$_dl_name")"
     _dl_file="${download_dir}${_dl_dir:+/${_dl_dir}}/${_dl_safe}.mp4"
     mkdir -p "$(dirname "$_dl_file")" 2>/dev/null
 
@@ -755,7 +760,6 @@ prompt_action() {
     _title=$(jq -r '.title' "$tmpfile2")
     _slug=$(jq -r '.url_slug // ""' "$tmpfile2")
     _range_end=""
-    case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
 
     # ─── Series/Anime flow ───
     if is_series; then
@@ -836,7 +840,7 @@ prompt_action() {
                             # whole-season archive (Vegamovies-style ZIP dump):
                             # not streamable — download it instead
                             info "Season $_sn is a ZIP archive — downloading instead of streaming."
-                            _zspec="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+                            _zspec="$(sanitize "$_title")"
                             mkdir -p "$download_dir"
                             # the label is remote text — flatten it to one
                             # sanitised path component so it cannot traverse
@@ -1169,7 +1173,7 @@ anime_play_episode() {
     _video_link="$(printf "%s" "$_chosen" | cut -d ">" -f 2)"
     [ -z "$_video_link" ] && { warn "No valid stream for ep $_ep_no."; return 1; }
     if [ "$download_all_mode" = 1 ]; then
-        _safe="$(printf "%s" "$anime_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        _safe="$(sanitize "$anime_title")"
         _epnum=$(printf '%02d' "$_ep_no")
         # S{season}E{ep} naming — same shape the series -D flow uses, so a
         # re-run of -A -D on a partially-downloaded title skips existing files
@@ -1302,7 +1306,6 @@ cmd_anime() {
         anime_ep_list="$(eps_by_request "$anime_ep_list" "$requested_eps")"
         _dl_range=""
         if [ -t 0 ]; then
-            case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
             # representative qualities from the first episode's master playlist
             _ql=""
             if [ -n "$anime_ep_list" ]; then
@@ -1563,7 +1566,7 @@ pop_play_ep() { # id season ep title — resolve + play/download one episode
     [ -z "$_u" ] && { warn "No stream for S${_sn}E${_ep}."; return 1; }
     _pl="$(pop_m3u8 "$_u")" || { warn "No stream for S${_sn}E${_ep}."; return 1; }
     if [ "$download_all_mode" = 1 ]; then
-        _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        _safe="$(sanitize "$_title")"
         do_download "$_pl" "${_safe}/season-${_sn}/S${_sn}E$(printf '%02d' "$_ep")"
         return $?
     fi
@@ -1671,7 +1674,7 @@ pop_movie() { # id title
     [ -z "$_u" ] && { warn "No stream found."; return 1; }
     _pl="$(pop_m3u8 "$_u")" || { warn "No stream found."; return 1; }
     if [ "$download_all_mode" = 1 ] || [ "$player_function" = "download" ]; then
-        _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        _safe="$(sanitize "$_title")"
         do_download "$_pl" "$_safe"
         return $?
     fi
@@ -1797,7 +1800,7 @@ info_only=0
 download_all_mode=0
 menu_program="${VICINE_MENU:-fzf}"
 menu_extra_flags="${VICINE_MENU_FLAGS:-}"
-menu_multi_flag=""
+menu_multi_flag=""   # finalized after arg parsing (multi-select flag)
 result_limit="${VICINE_RESULT_LIMIT:-200}"
 quality="${VICINE_QUALITY:-best}"
 requested_eps=""
@@ -1898,6 +1901,14 @@ case "$select_nth" in
     *[!0-9]*) die "--select-nth must be a non-negative integer" ;;
 esac
 
+# multi-select flag per menu program — computed once; menu_program does not
+# change after arg parsing. dmenu has no multi-select and gets nothing.
+case "$menu_program" in
+    fzf)  menu_multi_flag="-m" ;;
+    rofi) menu_multi_flag="-multi-select" ;;
+    *)    menu_multi_flag="" ;;
+esac
+
 # Deps check
 dep_ch "sed"
 dep_ch "grep"
@@ -1985,11 +1996,10 @@ case "$search_mode" in
             _sc=$(season_count)
             [ "$_sc" -eq 0 ] && die "No season data found."
             _title="$(jq -r '.title' "$tmpfile2" | hdec)"
-            _safe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+            _safe="$(sanitize "$_title")"
 
             # Interactive: let the user pick the quality and seasons first
             if [ -t 0 ]; then
-                case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
                 # only list qualities that actually appear in the seasons
                 _ql=""
                 _qi=1
@@ -2153,7 +2163,6 @@ case "$search_mode" in
         [ -z "$_links" ] && die "No downloadable links for '$_title'."
         _parsed="$(parse_links "$_links")"
         if [ -t 0 ]; then
-            case "$menu_program" in fzf) menu_multi_flag="-m" ;; rofi) menu_multi_flag="-multi-select" ;; *) menu_multi_flag="" ;; esac
             _ql="$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u)"
             [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
             _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
@@ -2166,7 +2175,7 @@ case "$search_mode" in
         fi
         _mresolved=$(resolve_stream_url "$_best_url")
         [ -z "$_mresolved" ] && die "Failed to resolve movie URL."
-        _msafe="$(printf "%s" "$_title" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_')"
+        _msafe="$(sanitize "$_title")"
         mkdir -p "$download_dir"
         do_download "$_mresolved" "$_msafe"
         _mrc=$?
@@ -2181,4 +2190,4 @@ esac
 
 [ "$player_function" = "download" ] && exit 0
 
-rm -f "$tmpfile" "$tmpfile2" "$tmpfile3"
+# temp files are removed by the cleanup EXIT trap — nothing to do here
