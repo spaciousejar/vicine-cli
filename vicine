@@ -681,7 +681,8 @@ episode_loop() {
     _title="$1"
     _slug="$2"
     _sn="$3"
-    _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
+    _ep_total=$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)
+    _ep_first=$(printf '%s\n' "$_ep_list" | head -1 | cut -f1)
     _prev_pid=""
 
     while true; do
@@ -731,7 +732,7 @@ episode_loop() {
         _sc=$(season_count)
         printf "" > "$tmpfile3"
         printf "replay\n" >> "$tmpfile3"
-        [ "$_cur_ep" -gt 1 ] && printf "previous\n" >> "$tmpfile3"
+        [ "$_cur_ep" -gt "${_ep_first:-1}" ] && printf "previous\n" >> "$tmpfile3"
         [ "$_cur_ep" -lt "$_ep_total" ] && printf "next\n" >> "$tmpfile3"
         printf "select\n" >> "$tmpfile3"
         [ "$_sc" -gt 1 ] && printf "change_season\n" >> "$tmpfile3"
@@ -741,8 +742,8 @@ episode_loop() {
         [ -z "$_ctrl" ] && break
 
         case "$_ctrl" in
-            next)           _cur_ep=$(( _cur_ep + 1 )) ;;
-            previous)       _cur_ep=$(( _cur_ep - 1 )) ;;
+            next)           _cur_ep="$(printf '%s\n' "$_ep_list" | awk -v n="$_cur_ep" '$1>n{print $1; exit}')" ;;
+            previous)       _cur_ep="$(printf '%s\n' "$_ep_list" | awk -v n="$_cur_ep" '$1<n{l=$1} END{print l}')" ;;
             replay)         ;;
             select)
                 printf "" > "$tmpfile3"
