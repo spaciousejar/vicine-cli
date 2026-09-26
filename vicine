@@ -920,6 +920,9 @@ prompt_action() {
                 _start=$(printf "%s" "$requested_eps" | grep -oE '^(-1|[0-9]+)' | head -1)
                 _end=$(printf "%s" "$requested_eps" | grep -oE '(-1|[0-9]+)$' | tail -1)
                 [ "$_end" = "-1" ] && _end="$(printf "%s\n" "$_ep_list" | tail -1 | cut -f1)"
+                printf "%s\n" "$_ep_list" | grep -qx "$_start" || die "Episode $_start not found."
+                # an out-of-range end used to truncate the run silently
+                printf "%s\n" "$_ep_list" | grep -qx "$_end" || die "Episode $_end not found."
                 _cur_ep="$_start"
                 _range_end="$_end"
                 ;;
