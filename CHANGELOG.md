@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Successful runs exit 0 instead of 1 (the final `&& exit 0` leaked 1 for
+  non-download modes) (#24).
+- Picking ESC exits quietly again — `$?` inside `if !` is always 0, so the
+  #11 cancel path was dead code; rc is now captured before the negation
+  (#27).
+- `-D` no longer clobbers `-b`/`-t`/`-r`/`-c` modes; it only rewrites the
+  bare-search case (#26).
+- Non-Latin titles (Hindi, Japanese, ...) keep their script in filenames
+  instead of collapsing to `.mp4` and false "Already exists"; degenerate
+  all-hostile titles get a stable numeric name (#25).
+- `VICINE_MENU` is respected on non-TTY runs (#30).
+- Series play: next/previous step to existing episodes and the header uses
+  the highest episode number, not the line count (#28); `-e N-M` validates
+  the end of the range (#29).
+- `change_quality` no longer lists `best` twice (series) and the movie
+  picker lists the real variants (#31, #32).
+- popmovie/pop_series episode selects re-validate the picked episode (#33).
+- `hdec` decodes entities once and is applied at the picker, control menus,
+  and history rows (#34).
+- Dropped a dead guard in `select_item` (#35).
+
 ### Added
 
 - `-D` series/anime downloads run one at a time by default so each episode
