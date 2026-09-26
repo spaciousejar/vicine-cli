@@ -1,5 +1,8 @@
 # Contributing
 
+Usage lives in the [README](README.md); contributing conventions below.
+First, check that no open [issue](https://github.com/spaciousejar/vicine-cli/issues) already covers your idea.
+
 ## Pull requests
 
 - The script must stay POSIX `sh` (`#!/bin/sh`): no bashisms, no new

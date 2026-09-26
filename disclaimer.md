@@ -1,5 +1,7 @@
 # Disclaimer
 
+See the [README](README.md) first — this file is the legal notice.
+
 vicine is a terminal front-end for content that is already publicly
 accessible on the web. Every stream or download it serves comes from
 external, non-affiliated sources — movie/series data is scraped from the

@@ -1,5 +1,9 @@
 # Hacking vicine
 
+For usage and install options see the [README](README.md); for contribution
+rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
+works.
+
 vicine scrapes three backends: **hicine** (movies/series), **popmovie**
 (TMDB/vidsrc backup), and **hianime** (anime). All are plain HTTP APIs
 wrapped in POSIX shell — no build step, no frameworks.
