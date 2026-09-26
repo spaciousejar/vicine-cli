@@ -566,8 +566,8 @@ do_download() {
 
     # Fail fast on provider-side dead links: a 1-byte range probe rejects
     # 401/403/404/410 before the yt-dlp→ffmpeg→curl chain runs; anything else
-    # (timeout, range-averse server) keeps the old path. ponytail: assumes the
-    # source tolerates Range; revisit if a real source 200s ranges but 403s
+    # (timeout, range-averse server) keeps the old path. Assumes the source
+    # tolerates Range; revisit if a real source 200s ranges but 403s
     # full GETs, or at the next audit pass (audit.yml opens one monthly).
     case "$_url" in
         http://*|https://*)
