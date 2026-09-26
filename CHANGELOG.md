@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `-D` prints a running `done/total` progress tally for series and anime
+  downloads (e.g. `:: 11/22 (50%)`), updated as each episode or batch
+  completes.
+
 ## [1.5.1] - 2026-09-26
 
 ### Fixed

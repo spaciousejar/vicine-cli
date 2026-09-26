@@ -535,6 +535,14 @@ _stage_ok() {
     return 0
 }
 
+# bulk -D progress: one updating line per completed episode/batch
+_dl_progress() {
+    _done="$1"; _total="$2"
+    [ -n "$_total" ] && [ "$_total" -gt 0 ] 2>/dev/null || return 0
+    _pct=$(( _done * 100 / _total ))
+    info "${_done}/${_total} (${_pct}%)"
+}
+
 do_download() {
     _url="$1"
     _name="$2"
@@ -1339,6 +1347,7 @@ cmd_anime() {
         printf "%s\n" "$anime_ep_list" > "$tmpfile3"
         _jobs=0
         _waitpids=""
+        _done=0
         while IFS= read -r _ep; do
             if [ -n "$_rstart" ]; then
                 [ "$_ep" -ge "$_rstart" ] 2>/dev/null || continue
@@ -1354,6 +1363,8 @@ cmd_anime() {
                 [ "$_jobs" -ge "$dl_jobs" ] && {
                     _rc=0
                     for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                    _done=$(( _done + _jobs ))
+                    _dl_progress "$_done" "$_total"
                     _waitpids=""; _jobs=0
                     [ "$_rc" -ge 130 ] && exit "$_rc"
                 }
@@ -1362,10 +1373,14 @@ cmd_anime() {
                 anime_play_episode "$_ep"
                 _rc=$?
                 [ "$_rc" -ge 130 ] && exit "$_rc"
+                _done=$(( _done + 1 ))
+                _dl_progress "$_done" "$_total"
             fi
         done < "$tmpfile3"
         _rc=0
         for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+        _done=$(( _done + _jobs ))
+        _dl_progress "$_done" "$_total"
         _waitpids=""
         [ "$_rc" -ge 130 ] && exit "$_rc"
         return
@@ -2056,6 +2071,7 @@ case "$search_mode" in
             fi
 
             _si=1
+            _done=0
             while [ "$_si" -le "$_sc" ]; do
                 _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
                 _ep_list=""
@@ -2090,6 +2106,8 @@ case "$search_mode" in
                             [ "$_jobs" -ge "$dl_jobs" ] && {
                                 _rc=0
                                 for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                                _done=$(( _done + _jobs ))
+                                _dl_progress "$_done" "$_total"
                                 _waitpids=""; _jobs=0
                                 [ "$_rc" -ge 130 ] && exit "$_rc"
                             }
@@ -2103,10 +2121,14 @@ case "$search_mode" in
                             do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
                             _rc=$?
                             [ "$_rc" -ge 130 ] && exit "$_rc"
+                            _done=$(( _done + 1 ))
+                            _dl_progress "$_done" "$_total"
                         fi
                     done < "$tmpfile3"
                     _rc=0
                     for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                    _done=$(( _done + _jobs ))
+                    _dl_progress "$_done" "$_total"
                     _waitpids=""
                     [ "$_rc" -ge 130 ] && exit "$_rc"
                 fi
