@@ -1348,9 +1348,12 @@ cmd_anime() {
         # only ask on a real terminal — piped/cron runs keep the old behavior
         if [ -t 0 ]; then
             if [ "$_total" -eq 1 ]; then _ep_label2="episode"; else _ep_label2="episodes"; fi
-            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label2} of '${anime_title}'?${C_RESET} [y/N] "
+            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label2} of '${anime_title}'?${C_RESET} [Y/n] "
             read -r _yn
-            [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+            # Enter / y download; only an explicit n/N cancels
+            case "$_yn" in
+                n|N) exit 0 ;;
+            esac
         fi
         printf "%s\n" "$anime_ep_list" > "$tmpfile3"
         _jobs=0
@@ -2087,10 +2090,13 @@ case "$search_mode" in
             fi
             if [ "$_total" -eq 1 ]; then _ep_label="episode"; else _ep_label="episodes"; fi
 
-            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [y/N] "
+            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [Y/n] "
             if [ -t 0 ]; then
                 read -r _yn
-                [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
+                # Enter / y download; only an explicit n/N cancels
+                case "$_yn" in
+                    n|N) exit 0 ;;
+                esac
             fi
 
             _si=1
