@@ -1721,7 +1721,8 @@ pop_series() { # id title
                 printf "" > "$tmpfile3"
                 printf '%s' "$_eps_json" | jq -r '.episodes[] | "Ep " + (.episode_number|tostring) + "  " + (.name // "")' >> "$tmpfile3"
                 _p=$(menu "Select episode: " < "$tmpfile3") || break
-                _cur_ep=$(printf "%s" "$_p" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
+                _cur_ep="$(printf "%s" "$_p" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')"
+                [ -z "$_cur_ep" ] && break
                 ;;
             *) break ;;
         esac
