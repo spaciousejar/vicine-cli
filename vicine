@@ -2281,3 +2281,4 @@ case "$search_mode" in
 esac
 
 [ "$player_function" = "download" ] && exit 0
+exit 0
