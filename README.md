@@ -147,7 +147,9 @@ sudo cp vicine /usr/local/bin/vicine
 
 ## Releasing
 
-Releases are fully automated — one tag push is enough:
+Releases are fully automated — one tag push is enough. The full policy
+(when to tag, emergency releases, post-tag verification) lives in
+[RELEASE.md](RELEASE.md); the short version:
 
 ```sh
 # bump the version in `vicine` (version_number), `package.json`, and the
