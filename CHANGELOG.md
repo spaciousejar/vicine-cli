@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-09-26
+
 ### Fixed
 
 - The anime episode picker maps the display row back to the real episode
@@ -16,8 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_stage_ok` also rejects JSON and plain-text error bodies
   (`{"error":…}`, `Access denied`, `Not Found`, `Forbidden`) returned with
   a 200, not just HTML/XML pages (#23).
-
-### Fixed
 
 - Picker **cancel (ESC)** no longer triggers the server-2/server-3 fallback
   chain — a cancelled search exits quietly (issues #11).
@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   episodes actually land where the gap is (#21).
 - Series `change_quality` lists the season's real qualities instead of a
   hardcoded 480p/720p/1080p/2160p (#22).
+
+### Changed
+
+- `yt-dlp` is now a first-class dependency in every package
+  manifest (AUR depends, Homebrew, Scoop, Nix wraps it onto PATH,
+  one-liner installer); `ffmpeg` stays the optional fallback.
+- Internal dedup: `sanitize()` (was 6 inline copies), `menu_multi_flag`
+  computed once, `is_series()` reuses `season_count()`.
 
 ## [1.5.0] - 2026-09-24
 
