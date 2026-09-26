@@ -266,8 +266,8 @@ henc() {
     printf '%s' "$1" | jq -sRr '@uri'
 }
 
-# Filename-safe form of a title (single canonical helper; replaces the
-# seven inline copies of the same sed|tr pipeline)
+# Filename-safe form of a title (canonical helper; was inline at the
+# call sites)
 sanitize() {
     printf "%s" "$1" | sed 's/[^a-zA-Z0-9 ._-]//g' | tr ' ' '_'
 }
@@ -1800,7 +1800,6 @@ info_only=0
 download_all_mode=0
 menu_program="${VICINE_MENU:-fzf}"
 menu_extra_flags="${VICINE_MENU_FLAGS:-}"
-menu_multi_flag=""   # finalized after arg parsing (multi-select flag)
 result_limit="${VICINE_RESULT_LIMIT:-200}"
 quality="${VICINE_QUALITY:-best}"
 requested_eps=""
@@ -2189,5 +2188,3 @@ case "$search_mode" in
 esac
 
 [ "$player_function" = "download" ] && exit 0
-
-# temp files are removed by the cleanup EXIT trap — nothing to do here
