@@ -374,7 +374,7 @@ is_series() {
 
 # Get available seasons count
 season_count() {
-    [ -f "$tmpfile2" ] || { echo 0; return; }
+    [ -f "$tmpfile2" ] || { printf '%s\n' 0; return; }
     _count=0
     _i=1
     while [ "$_i" -le 20 ]; do
@@ -382,7 +382,7 @@ season_count() {
         [ -n "$_s" ] && _count="$_i"
         _i=$(( _i + 1 ))
     done
-    echo "$_count"
+    printf '%s\n' "$_count"
 }
 
 # Get episode URL by number from parsed episodes
