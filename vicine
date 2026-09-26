@@ -258,7 +258,7 @@ parse_episodes() {
 
 # Decode common HTML entities in titles/headers
 hdec() {
-    sed "s/&#0*39;/'/g; s/&#x27;/'/g; s/&amp;/\&/g; s/&quot;/\"/g"
+    sed "s/&#0*39;/'/g; s/&#x27;/'/g; s/&quot;/\"/g; s/&amp;/\&/g"
 }
 
 # Percent-encode a string for use in a URL (spaces, &, #, /, etc.)
@@ -316,7 +316,7 @@ select_item() {
     fi
 
     # Build display list (1-based, like the anime menu): "1  Title  [type]  (year)"
-    jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" > "$tmpfile3"
+    jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" | hdec > "$tmpfile3"
 
     _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 2   # 2 = user cancelled
     [ -z "$_selection" ] && return 2
@@ -338,7 +338,7 @@ show_info() {
     _title=$(jq -r '.title' "$_f" | hdec)
     _type=$(jq -r '.contentType // "movie"' "$_f")
 
-    printf "\n"
+    /dev/null
     printf "  ${C_CYAN}${C_BOLD}%-50s${C_RESET} ${C_DIM}%s${C_RESET}\n" "$_title" "$_type"
     printf "  ${C_DIM}$(hr 50)${C_RESET}\n"
     printf "\n"
@@ -436,7 +436,7 @@ cmd_history() {
     [ -f "$histfile" ] && [ -s "$histfile" ] || { warn "No watch history yet."; return 0; }
     _count=$(wc -l < "$histfile")
     printf "" > "$tmpfile3"
-    awk -F'\t' '{ printf "%d  %s", NR, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" >> "$tmpfile3"
+    awk -F'\t' '{ printf "%d  %s", NR, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" | hdec >> "$tmpfile3"
     _pick=$(menu "Continue (${_count}): " < "$tmpfile3")
     [ -z "$_pick" ] && return 0
     _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
@@ -785,7 +785,7 @@ episode_loop() {
 }
 
 prompt_action() {
-    _title=$(jq -r '.title' "$tmpfile2")
+    _title=$(jq -r '.title' "$tmpfile2" | hdec)
     _slug=$(jq -r '.url_slug // ""' "$tmpfile2")
     _range_end=""
 
