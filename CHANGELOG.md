@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `-D` prints a running `done/total` progress tally for series and anime
-  downloads (e.g. `:: 11/22 (50%)`), updated as each episode or batch
-  completes.
+- `-D` series/anime downloads run one at a time by default so each episode
+  shows yt-dlp's own progress bar (movies already did); parallel is opt-in
+  via `VICINE_DL_JOBS`, where per-job bars are suppressed and a
+  `[####------] done/total` ASCII tally is shown instead.
 
 ## [1.5.1] - 2026-09-26
 

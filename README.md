@@ -227,8 +227,10 @@ vicine -i batman               # Show info only (no play)
 ```
 
 `-D` downloads land in `~/Movies/<Title>/season-N/` (override with
-`VICINE_DOWNLOAD_DIR`), several episodes in parallel (`VICINE_DL_JOBS`,
-default 2). Movies keep the flat layout.
+`VICINE_DOWNLOAD_DIR`), one at a time by default so each episode shows
+yt-dlp's own progress bar; set `VICINE_DL_JOBS=2` (or more) for parallel
+batches — per-job bars are suppressed then and a `[####------] done/total`
+tally is shown instead. Movies keep the flat layout.
 
 ### Options
 
@@ -252,7 +254,7 @@ default 2). Movies keep the flat layout.
 | `--exit-after-play` | Play then exit, return player exit code |
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |
-| `-D`, `--download-all` | Download a movie, whole series, or anime — interactive quality/season pickers, parallel downloads (`VICINE_DL_JOBS`) |
+| `-D`, `--download-all` | Download a movie, whole series, or anime — interactive quality/season pickers; serial by default (yt-dlp bars), parallel opt-in via `VICINE_DL_JOBS` |
 | `-p`, `--player` | Specify player (mpv, iina, vlc) |
 | `-V`, `-v`, `--version`, `--v` | Show version |
 | `-h`, `--help` | Show help |

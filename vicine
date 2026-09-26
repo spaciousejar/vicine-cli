@@ -1817,7 +1817,7 @@ anime_ep_list=""
 # so the local stamped playlist may fetch https segments)
 player_extra=""
 download_dir="${VICINE_DOWNLOAD_DIR:-$HOME/Movies}"
-dl_jobs="${VICINE_DL_JOBS:-2}"
+dl_jobs="${VICINE_DL_JOBS:-1}"
 no_detach="${VICINE_NO_DETACH:-0}"
 info_only=0
 download_all_mode=0
