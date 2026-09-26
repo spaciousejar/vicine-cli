@@ -297,7 +297,7 @@ movie_quality_url() {
 select_item() {
     _count=$(jq 'length' "$tmpfile" 2>/dev/null)
     case "${_count:-0}" in
-        ''|*[!0-9]*) return 1 ;;   # invalid JSON → no results
+        *[!0-9]*) return 1 ;;   # invalid JSON → no results ('': unreachable via ${_count:-0} -> 0)
     esac
     [ "$_count" -eq 0 ] && return 1
 
