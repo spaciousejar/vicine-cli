@@ -1347,7 +1347,8 @@ cmd_anime() {
         fi
         # only ask on a real terminal — piped/cron runs keep the old behavior
         if [ -t 0 ]; then
-            printf "\n  ${C_YELLOW}Download ${_total} episode(s) of '${anime_title}'?${C_RESET} [y/N] "
+            if [ "$_total" -eq 1 ]; then _ep_label2="episode"; else _ep_label2="episodes"; fi
+            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label2} of '${anime_title}'?${C_RESET} [y/N] "
             read -r _yn
             [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
         fi
@@ -2078,7 +2079,15 @@ case "$search_mode" in
                 _si=$(( _si + 1 ))
             done
 
-            printf "\n  ${C_YELLOW}Download ${_total} episodes of '${_title}' (${_nsel} season(s))?${C_RESET} [y/N] "
+            # season/episode labels for the confirm: say WHICH season, and pluralize
+            if [ "$_nsel" -eq 1 ]; then
+                _sel_label="Season ${_sel_seasons:-1}"
+            else
+                _sel_label="$_nsel seasons"
+            fi
+            if [ "$_total" -eq 1 ]; then _ep_label="episode"; else _ep_label="episodes"; fi
+
+            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [y/N] "
             if [ -t 0 ]; then
                 read -r _yn
                 [ "$_yn" != "y" ] && [ "$_yn" != "Y" ] && exit 0
