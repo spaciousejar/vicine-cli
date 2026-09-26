@@ -1,0 +1,4 @@
+# yt-dlp / curl download artifacts
+*.part
+*.ytdl
+*.temp
