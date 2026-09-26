@@ -338,7 +338,6 @@ show_info() {
     printf "  ${C_DIM}$(hr 50)${C_RESET}\n"
     printf "\n"
 
-    # Download links
     _links=$(jq -r '.links // empty' "$_f")
     if [ -n "$_links" ]; then
         printf "\n"
