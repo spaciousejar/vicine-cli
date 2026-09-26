@@ -5,7 +5,7 @@
 [![AUR version](https://img.shields.io/aur/version/vicine)](https://aur.archlinux.org/packages/vicine)
 [![License](https://img.shields.io/npm/l/vicine)](https://github.com/spaciousejar/vicine-cli/blob/master/LICENSE)
 
-vicine — free, open-source terminal tool to search, stream and download movies, series and anime
+free, open-source terminal tool to search, stream and download movies, series and anime
 
 See the [CHANGELOG](CHANGELOG.md) for release history.
 
