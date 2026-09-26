@@ -34,8 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-D -e` confirm count matches what will actually download (#9, #10).
 - Parallel bulk `-D` interrupts work under bash: workers are awaited by PID
   instead of dash-only bare `wait` (#12).
-- `-d` downloads exit after saving — no playback menu, no watch-history
-  entry, no misleading "Playing:" line (#8).
+- `-d` downloads exit after saving — no playback menu, no misleading
+  "Playing:" line (#8); downloaded titles are recorded in history.
 - `episode_loop` waits only on the PID a player truly backgrounded — a stale
   `$!` is no longer awaited after foreground/`-d` runs (#16).
 - popmovie `pop_m3u8`: absolute segment URIs no longer get a doubled
