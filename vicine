@@ -1012,8 +1012,9 @@ cmd_search() {
         fi
         return
     fi
-    if ! select_item; then
-        _sel_rc=$?
+    select_item
+    _sel_rc=$?
+    if [ "$_sel_rc" -ne 0 ]; then
         if [ "$_sel_rc" = 2 ]; then
             # user cancelled the picker — exit quietly, no provider chain
             return 0
@@ -1747,8 +1748,10 @@ pop_search() {
     if ! jq -e 'length > 0' "$tmpfile" >/dev/null 2>&1; then
         warn "No results found for: $_query"; return 1
     fi
-    if ! select_item; then
-        [ $? -eq 2 ] && return 0
+    select_item
+    _pop_rc=$?
+    if [ "$_pop_rc" -ne 0 ]; then
+        [ "$_pop_rc" = 2 ] && return 0
         warn "No results found for: $_query"; return 1
     fi
     _p_title="$(jq -r '.title // ""' "$tmpfile2")"
