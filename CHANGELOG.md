@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-09-28
+
 ### Fixed
 
 - Successful runs exit 0 instead of 1 (the final `&& exit 0` leaked 1 for

@@ -1,6 +1,6 @@
 {
   "name": "vicine",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "free, open-source terminal tool to search, stream and download movies, series and anime",
   "bin": {
     "vicine": "vicine"
