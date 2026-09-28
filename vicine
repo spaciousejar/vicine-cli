@@ -106,6 +106,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}            Specify player (mpv, iina, vlc)
     ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}, ${C_CYAN}-v${C_RESET}, ${C_CYAN}--v${C_RESET}  Show version
     ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}              Show this help
+    ${C_CYAN}zxc${C_RESET}                    Search the zxcstream (vidstuck) movie catalog
     ${C_DIM}--rofi${C_RESET}                  Use rofi instead of fzf
     ${C_DIM}--dmenu${C_RESET}                 Use dmenu instead of fzf
     ${C_DIM}--no-detach${C_RESET}             Don't detach player
@@ -154,7 +155,7 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5" "${tmpfile3}.pre"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5" "${tmpfile3}.pre" "${tmpfile}.zxc"
     exit "$_exit_code"
 }
 
@@ -986,7 +987,7 @@ prompt_action() {
         _fallback_q="${query:-$_title}"
         _backup_used=1; pop_search "$_fallback_q"
         _sr=$?
-        [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_fallback_q"
+        [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_fallback_q" || cmd_zxc "$_fallback_q"
         return
     fi
 
@@ -1058,11 +1059,11 @@ cmd_search() {
         if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
             warn "server-1 unreachable — trying server-2, then server-3."
             _backup_used=1; pop_search "$_query"; _sr=$?
-            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query"
+            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query" || cmd_zxc "$_query"
         elif [ "$download_all_mode" -eq 1 ]; then
             warn "server-1 unreachable — trying server-2, then server-3."
             _backup_used=1; pop_search "$_query"; _sr=$?
-            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query"
+            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query" || cmd_zxc "$_query"
         else
             die "Search failed: ${API} unreachable"
         fi
@@ -1079,7 +1080,7 @@ cmd_search() {
             warn "Not on server-1 — trying server-2, then server-3."
             _backup_used=1; pop_search "$_query"
             _sr=$?
-            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query"
+            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query" || cmd_zxc "$_query"
         else
             warn "No results found for: $_query"
         fi
@@ -1506,6 +1507,85 @@ cmd_anime() {
 
     # play loop (control menu)
     anime_play_loop
+}
+
+# ─── ZXC provider (zxcstream.icu + vidstuck.xyz) ────────────────────────────
+# Catalog: zxcstream /database/* (TMDB-shaped JSON, no auth). Streams resolve
+# through vidstuck: meow → token, servers/andromeda → AES-encrypted internal
+# path (key hardcoded in their bundle), /backend/database → DASH MPD.
+ZXC_AES_KEY="7f4c9e2a81d63b05c4f7a9e8126d3b50e1a8c7f23d9465ab0c6e9f1d4a7b832c"
+ZXC_UO="a7f39c821d604e5b9c71f36e1547b"; ZXC_UP="c285f91ab306d28147a35632e816b"; ZXC_UG="6b491e7253ad84d392e7561a9384c"
+ZXC_UL="61d9a5274c8e3b29afd6384c291e6"; ZXC_UU="c492f7a183d6502b1e7436c538a716d"
+ZXC_UD="5e28c9147a306d1e829f3674b392a1"; ZXC_UC="b731e6c94f08269d725f8341c306e"; ZXC_UM="e164932c50216a39e5814b3027"
+ZXC_IM="f35a8c19d674b3265e871c4933a725f"
+zxc_cookies="${tmpfile}.zxc"
+
+# curl with the zxc/vidstuck session cookie jar
+zxcurl() {
+    # the vidstuck backend rejects calls without Origin/Referer
+    curl -s -c "$zxc_cookies" -b "$zxc_cookies" -A "$anime_agent"         -H 'Origin: https://vidstuck.xyz' -H 'Referer: https://vidstuck.xyz/' "$@"
+}
+
+# earn the Cloudflare/session cookie the backend requires
+zxc_warm() {
+    zxcurl -m 15 "https://zxcstream.icu/movie" -o /dev/null
+}
+
+# query -> "id<TAB>title<TAB>year" (zxcstream catalog, TMDB-shaped)
+zxc_search() {
+    _q=$(henc "$1")
+    zxcurl -m 15 "https://zxcstream.icu/database/search/movie?query=${_q}&language=en-US" |
+        jq -r '.results[]? | [.id, .title, (.release_date // "" | .[0:4])] | @tsv'
+}
+
+# id -> "title<TAB>year<TAB>date<TAB>imdb"
+zxc_details() {
+    zxcurl -m 15 "https://vidstuck.xyz/backend/tmdb/details/movie/${1}?language=en-US" |
+        jq -r '[.title // "", (.release_date // "" | .[0:4]), (.release_date // ""), (.imdb_id // "")] | @tsv'
+}
+
+# id title year date imdb -> prints the final DASH MPD
+zxc_resolve() {
+    _id="$1"; _title="$2"; _year="$3"; _date="$4"; _imdb="$5"
+    _m="$(zxcurl -X POST -H 'Content-Type: application/json' -d "{\"$ZXC_UO\":$_id,\"$ZXC_UP\":\"movie\",\"$ZXC_UG\":\"andromeda\"}" 'https://vidstuck.xyz/backend/meow')"
+    _tok="$(printf '%s' "$_m" | jq -r '.token // empty')"; _ts="$(printf '%s' "$_m" | jq -r '.ts // empty')"
+    [ -n "$_tok" ] || return 1
+    _te=$(henc "$_title")
+    _s="$(zxcurl -m 15 "https://vidstuck.xyz/backend/servers/andromeda?$ZXC_UO=$_id&$ZXC_UG=andromeda&$ZXC_UP=movie&$ZXC_UL=$_ts&$ZXC_UU=$_tok&$ZXC_UD=$_te&$ZXC_UC=$_year&$ZXC_UM=$_date&$ZXC_IM=$_imdb")"
+    _link="$(printf '%s' "$_s" | jq -r '.links[0].link // empty')"
+    [ -n "$_link" ] && [ "$_link" != "null" ] || return 1
+    _int="$(printf '%s' "$_link" | openssl enc -d -aes-256-cbc -a -A -md md5 -pass "pass:$ZXC_AES_KEY" 2>/dev/null)"
+    [ -n "$_int" ] || return 1
+    zxcurl -L -m 30 "https://vidstuck.xyz${_int}"
+}
+
+cmd_zxc() {
+    _q="$1"
+    [ -z "$_q" ] && die "Missing zxc query"
+    command -v openssl >/dev/null 2>&1 || die "zxc provider needs openssl"
+    info "Searching (zxc): $_q"
+    _list="$(zxc_search "$_q")"
+    [ -z "$_list" ] && { warn "No results on zxc."; return 1; }
+    _pick="$(printf '%s\n' "$_list" | nl -w2 | sed 's/^ *//;s/\t/  /' | menu "Select (zxc): " || true)"
+    [ -z "$_pick" ] && return 0
+    _id="$(printf '%s\n' "$_list" | sed -n "$(printf '%s' "$_pick" | awk '{print $1+0}')p" | cut -f1)"
+    zxc_warm
+    zxcurl -m 15 "https://vidstuck.xyz/embed/movie/${_id}" -o /dev/null
+    _d="$(zxc_details "$_id")"
+    _tt="$(printf '%s' "$_d" | cut -f1)"; _yr="$(printf '%s' "$_d" | cut -f2)"
+    _dt="$(printf '%s' "$_d" | cut -f3)"; _im="$(printf '%s' "$_d" | cut -f4)"
+    _mpd="$(zxc_resolve "$_id" "$_tt" "$_yr" "$_dt" "$_im")"
+    [ -n "$_mpd" ] || { warn "No stream found."; return 1; }
+    printf '%s\n' "$_mpd" > "$tmpfile5"
+    _zsafe="$(sanitize "$_tt")"
+    if [ "$player_function" = "download" ]; then
+        do_download "$tmpfile5" "$_zsafe"
+        return $?
+    fi
+    info "Playing: $_tt"
+    player_extra="--demuxer-lavf-o=protocol_whitelist=file,https,tls,crypto,data"
+    play_url "$tmpfile5" "$_tt"
+    update_history "zxc-$_id" "$_tt" movie 0 0
 }
 
 # ─── Popmovie provider ──────────────────────────────────────────────────────
@@ -2007,7 +2087,7 @@ while [ $# -gt 0 ]; do
         --limit)          shift; [ -n "$1" ] || die "Missing value for --limit"; browse_limit="$1" ;;
         help)             help_info ;;
         version)          version_info ;;
-        trending|recent|browse|search|info|anime)
+        trending|recent|browse|search|info|anime|zxc)
             [ -z "$search_mode" ] && search_mode="$1" || query="$(printf '%s' "$query $1" | sed 's|^ ||')"
             ;;
         *)                query="$(printf '%s' "$query $1" | sed 's|^ ||')" ;;
@@ -2076,6 +2156,13 @@ case "$search_mode" in
             read -r query || die "No anime search query provided."
         done
         cmd_anime "$query"
+        ;;
+    zxc)
+        while [ -z "$query" ]; do
+            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}"
+            read -r query || die "No zxc search query provided."
+        done
+        cmd_zxc "$query"
         ;;
     trending)  cmd_trending "$query" ;;
     recent)    cmd_recent "$query" ;;
