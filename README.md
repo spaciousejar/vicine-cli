@@ -58,43 +58,6 @@ no seeking (backup-provider tradeoff). Trending/recent/stats, anime
 
 ## Installation
 
-Packaged installs below, or run anywhere via the [one-liner
-installer](#one-liner-installer).
-
-### macOS
-
-- **Homebrew** (tap provided by this repo):
-  ```sh
-  brew tap spaciousejar/vicine-cli
-  brew trust spaciousejar/vicine-cli   # required by Homebrew 6.0+ tap-trust
-  brew install vicine
-  ```
-  Installs `jq`, `fzf`, and the IINA app (vicine's default player on
-  macOS); brew skips IINA automatically when it's already installed. Use
-  `-p vlc` or `brew install mpv` if you don't want IINA.
-- **npm**: `npm install -g vicine`
-
-### Windows
-
-- **Scoop** — the `vicine` command wraps the Git Bash `bash.exe` that ships
-  with the `git` dependency, so no extra WSL/terminal setup is needed:
-  ```sh
-  scoop bucket add extras          # mpv and friends live here
-  scoop bucket add vicine-cli https://github.com/spaciousejar/vicine-cli
-  scoop install vicine-cli/vicine
-  ```
-  Add a player (`scoop install extras/mpv`, IINA, or VLC) — vicine has no
-  bundled player on Windows; `yt-dlp` from `extras` enables downloads.
-- **WSL**: follow the Linux steps below.
-
-### Linux
-
-- **AUR (Arch)**: `yay -S vicine`
-- **Nix**: `nix profile install github:spaciousejar/vicine-cli`
-- **npm**: `npm install -g vicine`
-- **One-liner installer**
-- **Manual (git)**
-
 ### One-liner installer
 
 ```sh
@@ -106,6 +69,47 @@ System-wide (requires root):
 ```sh
 curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/install.sh | sudo sh -s /usr/local/bin
 ```
+
+The installer installs `curl jq fzf mpv yt-dlp` (via apt/pacman/dnf/apk or
+Homebrew) and the script itself; `--no-deps` skips the packages.
+
+### AUR (Arch)
+
+```sh
+yay -S vicine        # or: paru -S vicine
+```
+
+### Homebrew (macOS)
+
+```sh
+brew tap spaciousejar/vicine-cli
+brew trust spaciousejar/vicine-cli   # required by Homebrew 6.0+ tap-trust
+brew install vicine
+```
+
+Installs `jq`, `fzf`, and the IINA app (vicine's default player on
+macOS); brew skips IINA automatically when it's already installed. Use
+`-p vlc` or `brew install mpv` if you don't want IINA.
+
+### Nix
+
+```sh
+nix profile install github:spaciousejar/vicine-cli
+```
+
+### Scoop (Windows)
+
+The `vicine` command wraps the Git Bash `bash.exe` that ships with the
+`git` dependency, so no extra WSL/terminal setup is needed:
+
+```sh
+scoop bucket add extras          # mpv and friends live here
+scoop bucket add vicine-cli https://github.com/spaciousejar/vicine-cli
+scoop install vicine-cli/vicine
+```
+
+Add a player (`scoop install extras/mpv`, IINA, or VLC) — vicine has no
+bundled player on Windows; `yt-dlp` from `extras` enables downloads.
 
 ### Manual (git)
 
@@ -120,6 +124,11 @@ Optionally, add it to your `$PATH`:
 ```sh
 sudo cp vicine /usr/local/bin/vicine
 ```
+
+### Also available
+
+- **npm** (macOS, Linux): `npm install -g vicine`
+- **WSL**: follow the Linux steps above (one-liner, AUR, or manual).
 
 ### Updating
 
