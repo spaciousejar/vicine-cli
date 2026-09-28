@@ -565,9 +565,17 @@ do_download() {
     [ -z "$_dl_dir" ] || [ "$_dl_dir" = "." ] && _dl_dir=""
     _dl_safe="$(sanitize "$_dl_name")"
     _dl_file="${download_dir}${_dl_dir:+/${_dl_dir}}/${_dl_safe}.mp4"
+    _dl_base="${_dl_file%.mp4}"
     mkdir -p "$(dirname "$_dl_file")" 2>/dev/null
 
-    [ -s "$_dl_file" ] && { warn "Already exists: $_dl_file (delete it if a previous download was interrupted)"; return 0; }
+    # Already exists — any container, not just .mp4 (a source that can't mux
+    # into MP4 saves as e.g. .mkv via the fallback below; skip it next time)
+    _dl_existing=""
+    for _f in "$_dl_base".*; do
+        [ -e "$_f" ] || continue
+        case "$_f" in *.part|*.ytdl) ;; *) _dl_existing="$_f"; break ;; esac
+    done
+    [ -n "$_dl_existing" ] && { warn "Already exists: $_dl_existing (delete it if a previous download was interrupted)"; return 0; }
 
     # Fail fast on provider-side dead links: a 1-byte range probe rejects
     # 401/403/404/410 before the yt-dlp→ffmpeg→curl chain runs; anything else
@@ -630,6 +638,30 @@ do_download() {
         # it is substantial and not an error page.
         if [ "$_rc" -ne 0 ] && [ -s "$_pt" ] && [ "$(stat -c%s "$_pt" 2>/dev/null)" -gt 10485760 ] && _stage_ok "$_pt"; then
             mv -f "$_pt" "$_dl_file" 2>/dev/null && { ok "Saved: $_dl_file (yt-dlp .part recovery)"; return 0; }
+        fi
+        # a source that cannot be muxed into MP4 (e.g. vp9/opus HLS) fails
+        # the -o *.mp4 attempt outright — retry once letting yt-dlp pick the
+        # container, then keep the real extension instead of mislabelling (#13)
+        if [ "$_rc" -ne 0 ]; then
+            rm -f "$_dl_file" "$_pt"
+            if [ -n "$_ref" ]; then
+                yt-dlp $_yt $_file_flag --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_base.%(ext)s" "$_dl_arg"
+            else
+                yt-dlp $_yt $_file_flag --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_base.%(ext)s" "$_dl_arg"
+            fi
+            _rc=$?
+            if [ "$_rc" -ge 130 ]; then warn "Interrupted."; rm -f "$_dl_base".* 2>/dev/null; return "$_rc"; fi
+            _real=""
+            for _f in "$_dl_base".*; do
+                [ -e "$_f" ] || continue
+                case "$_f" in *.part|*.ytdl) ;; *) _real="$_f"; break ;; esac
+            done
+            if [ "$_rc" -eq 0 ] && [ -n "$_real" ] && _stage_ok "$_real"; then
+                _dl_file="$_real"
+                ok "Saved: $_dl_file"
+                return 0
+            fi
+            rm -f "$_dl_base".* 2>/dev/null
         fi
         rm -f "$_dl_file"
     fi
