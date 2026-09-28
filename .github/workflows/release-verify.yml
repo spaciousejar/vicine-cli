@@ -46,6 +46,8 @@ jobs:
           check bucket/vicine.json  "\"hash\": \"$sha\""        "scoop hash"
           check flake.nix           "version = \"$ver\""        "flake version"
           check flake.nix           "sha256 = \"$sha\""         "flake sha"
+          check aur/PKGBUILD        "pkgver=$ver"              "AUR pkgver"
+          check aur/PKGBUILD        "sha256sums=('$sha')"       "AUR sha"
 
           [ "$fail" = 0 ] || { echo "run 'gh workflow run \"Bump packaged versions\"' to fix" >&2; exit 1; }
           echo "pins OK for v$ver"

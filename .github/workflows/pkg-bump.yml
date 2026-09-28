@@ -39,8 +39,11 @@ jobs:
           sed -i "s|refs/tags/v[0-9.]*\.tar\.gz|refs/tags/v${ver}.tar.gz|; s|sha256 \"[0-9a-f]*\"|sha256 \"$sha\"|" Formula/vicine.rb
           sed -i "s|refs/tags/v[0-9.]*\.tar\.gz|refs/tags/v${ver}.tar.gz|; s|\"version\": \"[0-9.]*\"|\"version\": \"$ver\"|; s|\"hash\": \"[0-9a-f]*\"|\"hash\": \"$sha\"|" bucket/vicine.json
           sed -i "s/version = \"[0-9.]*\"/version = \"$ver\"/; s|refs/tags/v[0-9.]*\.tar\.gz|refs/tags/v${ver}.tar.gz|; s|sha256 = \"[0-9a-f]*\"|sha256 = \"$sha\"|" flake.nix
+          # keep the repo's AUR source current too (aur.yml bumps a copy and
+          # never writes back; without this it drifts every release)
+          sed -i "s/^pkgver=.*/pkgver=${ver}/; s/^sha256sums=(.*/sha256sums=('${sha}')/" aur/PKGBUILD
 
-          grep -n "1.4\|$ver" Formula/vicine.rb bucket/vicine.json flake.nix | grep -E 'version|refs/tags|sha' || true
+          grep -n "1.4\|$ver" Formula/vicine.rb bucket/vicine.json flake.nix aur/PKGBUILD | grep -E 'version|refs/tags|sha' || true
 
       - name: Commit if changed
         uses: stefanzweifel/git-auto-commit-action@v5
