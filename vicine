@@ -949,7 +949,10 @@ prompt_action() {
         # hicine has the title but no playable links — same fallback chain
         # as a search miss, so item-level dead entries don't hard-stop
         warn "No links on server-1 — trying server-2, then server-3."
-        _backup_used=1; pop_search "$_title" || cmd_anime "$_title"
+        # search the original query, not the hicine item's (possibly stub)
+        # title — e.g. 'xman' resolves to a dead trailer-stub entry
+        _fallback_q="${query:-$_title}"
+        _backup_used=1; pop_search "$_fallback_q" || cmd_anime "$_fallback_q"
         return
     fi
 
@@ -2285,7 +2288,8 @@ case "$search_mode" in
         if [ -z "$_links" ]; then
             # item-level dead entry: run the same backup chain as a search miss
             warn "No links on server-1 — trying server-2."
-            pop_search "$_title"
+            # original query, not the hicine stub title (see prompt_action)
+            pop_search "${query:-$_title}"
             exit 0
         fi
         _parsed="$(parse_links "$_links")"
