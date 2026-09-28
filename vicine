@@ -338,7 +338,7 @@ show_info() {
     _title=$(jq -r '.title' "$_f" | hdec)
     _type=$(jq -r '.contentType // "movie"' "$_f")
 
-    /dev/null
+    printf "\n"
     printf "  ${C_CYAN}${C_BOLD}%-50s${C_RESET} ${C_DIM}%s${C_RESET}\n" "$_title" "$_type"
     printf "  ${C_DIM}$(hr 50)${C_RESET}\n"
     printf "\n"
