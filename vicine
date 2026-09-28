@@ -945,7 +945,13 @@ prompt_action() {
 
     # ─── Movie flow ───
     _links=$(jq -r '.links // empty' "$tmpfile2")
-    [ -z "$_links" ] && warn "No downloadable links." && return 1
+    if [ -z "$_links" ]; then
+        # hicine has the title but no playable links — same fallback chain
+        # as a search miss, so item-level dead entries don't hard-stop
+        warn "No links on server-1 — trying server-2, then server-3."
+        _backup_used=1; pop_search "$_title" || cmd_anime "$_title"
+        return
+    fi
 
     _parsed="$(parse_links "$_links")"
     _best_url=$(movie_best_url "$_parsed")
@@ -1697,10 +1703,19 @@ pop_series() { # id title
         warn "Episode $_cur_ep not available."; return 1
     fi
 
+    _fails=0
     while true; do
         pop_play_ep "$_id" "$_sn" "$_cur_ep" "$_title"
         _rc=$?
         [ "$_rc" -ge 130 ] && return "$_rc"
+        # server-2 stream source down? bail after a few consecutive failures
+        # instead of repeating 'No stream for S1Ex.' for the whole season
+        if [ "$_rc" -ne 0 ]; then
+            _fails=$(( _fails + 1 ))
+            [ "$_fails" -ge 3 ] && { warn "server-2 stream source unreachable — giving up."; return 1; }
+        else
+            _fails=0
+        fi
         # range auto-advance
         if [ -n "$_rend" ]; then
             if [ "$_cur_ep" -lt "$_rend" ]; then _cur_ep=$(( _cur_ep + 1 )); continue
@@ -2267,7 +2282,12 @@ case "$search_mode" in
         # Movies: -D downloads the chosen-quality file (same pick as -d)
         _title="$(jq -r '.title' "$tmpfile2" | hdec)"
         _links=$(jq -r '.links // empty' "$tmpfile2")
-        [ -z "$_links" ] && die "No downloadable links for '$_title'."
+        if [ -z "$_links" ]; then
+            # item-level dead entry: run the same backup chain as a search miss
+            warn "No links on server-1 — trying server-2."
+            pop_search "$_title"
+            exit 0
+        fi
         _parsed="$(parse_links "$_links")"
         if [ -t 0 ]; then
             _ql="$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u)"
