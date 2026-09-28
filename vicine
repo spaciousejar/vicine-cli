@@ -952,7 +952,9 @@ prompt_action() {
         # search the original query, not the hicine item's (possibly stub)
         # title — e.g. 'xman' resolves to a dead trailer-stub entry
         _fallback_q="${query:-$_title}"
-        _backup_used=1; pop_search "$_fallback_q" || cmd_anime "$_fallback_q"
+        _backup_used=1; pop_search "$_fallback_q"
+        _sr=$?
+        [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_fallback_q"
         return
     fi
 
@@ -1023,10 +1025,12 @@ cmd_search() {
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
         if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
             warn "server-1 unreachable — trying server-2, then server-3."
-            _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
+            _backup_used=1; pop_search "$_query"; _sr=$?
+            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query"
         elif [ "$download_all_mode" -eq 1 ]; then
             warn "server-1 unreachable — trying server-2, then server-3."
-            _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
+            _backup_used=1; pop_search "$_query"; _sr=$?
+            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query"
         else
             die "Search failed: ${API} unreachable"
         fi
@@ -1041,7 +1045,9 @@ cmd_search() {
         fi
         if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
             warn "Not on server-1 — trying server-2, then server-3."
-            _backup_used=1; pop_search "$_query" || cmd_anime "$_query"
+            _backup_used=1; pop_search "$_query"
+            _sr=$?
+            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query"
         else
             warn "No results found for: $_query"
         fi
@@ -1769,6 +1775,7 @@ pop_movie() { # id title
 pop_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
+    _pop_found=0   # 1 once a title is chosen — callers stop the chain there
     _enc=$(henc "$_query")
     info "Searching (server-2): $_query"
     if ! curl -sf --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/search/multi?query=${_enc}" -o "$tmpfile"; then
@@ -1784,6 +1791,7 @@ pop_search() {
         [ "$_pop_rc" = 2 ] && return 0
         warn "No results found for: $_query"; return 1
     fi
+    _pop_found=1
     _p_title="$(jq -r '.title // ""' "$tmpfile2")"
     _p_id="$(jq -r '.url_slug // ""' "$tmpfile2")"
     _p_type="$(jq -r '.contentType // "movie"' "$tmpfile2")"
