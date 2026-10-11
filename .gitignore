@@ -2,3 +2,11 @@
 *.part
 *.ytdl
 *.temp
+
+# session cookie jars (zxc/vidstuck) — holds cf_clearance, never commit
+.zxc
+*.zxc
+
+# local tool state
+.freebuff/
+.playwright-mcp/

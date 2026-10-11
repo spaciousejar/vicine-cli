@@ -9,6 +9,24 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Warnings and errors must be zero. The 2026-09-28 audit found SC2319
+      # (`[ ... ] && exit $?`, which silently returned the test's status
+      # instead of the player's) and SC1083 already shipped to master past a
+      # green suite, because the self-checks cover parsers and arg validation,
+      # not exit-code plumbing. Info-level findings are reported but not
+      # enforced: SC2086 is deliberate word-splitting and SC2059 is #38.
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: .
+          severity: warning
+          additional_files: install.sh
+
   self-checks:
     runs-on: ubuntu-latest
     strategy:

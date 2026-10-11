@@ -29,32 +29,14 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Series support** — season/episode navigation with next/previous/replay controls
 - **Anime support** — dub/sub audio via hianime.at
 - **Automatic provider fallback** — when the primary catalogue (server-1)
-  has no result or is down, the search falls back to the popmovie backup
-  (server-2), then the hianime anime catalogue (server-3)
+  has no result or is down, the search falls back to two film mirrors
+  (vegamovies.gallery, then rogmovies.best) and finally to the hianime anime
+  catalogue, so a general query exhausts the film sources before the anime one
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer
 > MegaPlay-based servers, which can't be resolved by the script — those show
 > "No sources found".
 
-## Backup provider (server-2, popmovie)
-
-The popmovie catalogue (TMDB + vidsrc.sh streams) is the **automatic
-fallback**: if a server-1 search returns nothing, or the hicine API is
-unreachable, vicine retries the title there before the anime catalogue.
-It can also be forced as the sole provider:
-
-```sh
-VICINE_PROVIDER=popmovie vicine "the batman"
-VICINE_PROVIDER=popmovie vicine -q 1080p -D reacher
-```
-
-Notes: episodes resolve per (tmdb id, season, episode); the quality ladder
-is inside the resolved playlist (`-q` selects the matching variant);
-encrypted stream payloads need `node` (usually already present via npm).
-Playback pipes the stamped playlist through `yt-dlp` into the player —
-that sidesteps mpv's local-playlist network whitelist, but the pipe means
-no seeking (backup-provider tradeoff). Trending/recent/stats, anime
-(`-A`), and the watch history (uses TMDB ids) work as usual.
 
 ## Installation
 

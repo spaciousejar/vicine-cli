@@ -12,7 +12,7 @@ What's missing and why it matters.
 
 **Describe the solution you'd like**
 Concretely, with flags/env vars if you have them in mind. Note which
-provider it concerns (server-1 hicine / server-2 popmovie / server-3
+provider it concerns (server-1 hicine / server-2 hianime / vegamovies
 hianime) if any.
 
 **Describe alternatives you've considered**

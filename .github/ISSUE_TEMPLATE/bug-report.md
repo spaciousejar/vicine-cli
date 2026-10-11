@@ -18,7 +18,7 @@ assignees: ''
 Version: [e.g. 1.5.1, run `vicine -V`]
 OS: [e.g. Arch Linux / macOS 14]
 Shell: [e.g. bash, run `readlink /bin/sh`]
-Provider: [server-1 hicine / server-2 popmovie / server-3 hianime, if known]
+Provider: [server-1 hicine / server-2 hianime / vegamovies, if known]
 Query / command: [e.g. `vicine -D "one piece"`]
 
 **Describe the bug**

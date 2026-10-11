@@ -16,7 +16,6 @@ if [ -t 1 ]; then
     C_YELLOW="${ESC}[1;33m"
     C_BLUE="${ESC}[1;34m"
     C_CYAN="${ESC}[1;36m"
-    C_MAGENTA="${ESC}[1;35m"
     C_WHITE="${ESC}[1;37m"
     C_GRAY="${ESC}[2;37m"
 else
@@ -28,7 +27,6 @@ else
     C_YELLOW=""
     C_BLUE=""
     C_CYAN=""
-    C_MAGENTA=""
     C_WHITE=""
     C_GRAY=""
 fi
@@ -88,6 +86,7 @@ ${C_WHITE}Commands:${C_RESET}
 ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}            Search movies/series/anime
     ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}             Search anime directly (hianime.at)
+    ${C_CYAN}-z${C_RESET}, ${C_CYAN}--mirrors${C_RESET}          Search the mirrors directly (all, or one with -z HOST)
     ${C_DIM}--dub / --sub${C_RESET}           Dub/sub audio for anime (default dub; VICINE_ANIME_MODE=sub to switch)
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}          Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
@@ -106,7 +105,6 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}            Specify player (mpv, iina, vlc)
     ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}, ${C_CYAN}-v${C_RESET}, ${C_CYAN}--v${C_RESET}  Show version
     ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}              Show this help
-    ${C_CYAN}zxc${C_RESET}                    Search the zxcstream (vidstuck) movie catalog
     ${C_DIM}--rofi${C_RESET}                  Use rofi instead of fzf
     ${C_DIM}--dmenu${C_RESET}                 Use dmenu instead of fzf
     ${C_DIM}--no-detach${C_RESET}             Don't detach player
@@ -155,7 +153,7 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5" "${tmpfile3}.pre" "${tmpfile}.zxc"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile3}.pre" "${tmpfile3}.vega" "${tmpfile4}.vega"
     exit "$_exit_code"
 }
 
@@ -164,6 +162,11 @@ on_sigint() {
     warn "Interrupted."
     cleanup
 }
+
+# cleanup alone can't do this: in a HUP/TERM trap $? is the last command's
+# status (normally 0), so a killed script reported success.
+on_sighup()  { _exit_code=129; cleanup; }
+on_sigterm() { _exit_code=143; cleanup; }
 
 # ─── API ────────────────────────────────────────────────────────────────────
 
@@ -412,7 +415,10 @@ eps_by_request() {
         "")  printf '%s\n' "$_l" ;;
         -1)  _le="$(printf '%s\n' "$_l" | tail -1 | cut -f1)"
              printf '%s\n' "$_l" | awk -F'\t' -v l="$_le" '$1==l' ;;
-        *-*) _rs="${_r%-*}"; _re="${_r#*-}"
+        *-*) _rs="${_r%%-*}"; _re="${_r#*-}"
+             # %% (longest), not % (shortest): for "10--1" %- strips only "-1" and
+             # leaves "10-", which awk then compares as a STRING — "2" > "10-"
+             # so episodes below the start came back in the range
              [ "$_re" = "-1" ] && _re="$(printf '%s\n' "$_l" | tail -1 | cut -f1)"
              printf '%s\n' "$_l" | awk -F'\t' -v s="$_rs" -v e="$_re" '$1>=s && $1<=e' ;;
         *)   printf '%s\n' "$_l" | awk -F'\t' -v n="$_r" '$1==n' ;;
@@ -426,9 +432,15 @@ eps_by_request() {
 update_history() {
     _slug="$1"; _title="$2"; _type="$3"; _season="$4"; _ep="$5"
     [ -z "$_slug" ] && return
-    # fixed-string match on the first field — slugs from the API may contain
-    # regex characters that would break grep's BRE
-    awk -F '\t' -v s="$_slug" '$1 != s' "$histfile" > "$histfile.tmp" 2>/dev/null || true
+    # `"" !=` forces a string compare: bare `$1 != s` compares numerically when
+    # both look like numbers, so removing slug 005 also removed 5. The append
+    # uses "" as well so the dedup key keeps awk's string semantics.
+    awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$histfile.tmp" 2>/dev/null || true
+    # flatten tabs/newlines in the remote title: an embedded one would forge a
+    # whole extra row, and its season field reaches a jq program on read-back.
+    # Done on the title alone — running the whole record through tr would eat
+    # the trailing newline and break wc -l in cmd_history.
+    _title="$(printf '%s' "$_title" | tr '\t\n' '  ')"
     printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$histfile.tmp"
     mv "$histfile.tmp" "$histfile"
 }
@@ -470,10 +482,22 @@ cmd_clear_history() {
 
 # ─── Player ─────────────────────────────────────────────────────────────────
 
+# Provider text reaches mpv/yt-dlp/curl as a bare positional, so a leading "--"
+# is parsed as an option (mpv --script= runs Lua, yt-dlp --exec= runs a shell).
+# The 401/403 probe below can't help: it only runs for http(s). So allow only
+# an http(s) URL.
+check_stream_url() {
+    case "$1" in
+        http://*|https://*) return 0 ;;
+    esac
+    die "Refusing non-HTTP stream URL from provider: $1"
+}
+
 play_url() {
     _url="$1"
     _name="$2"
     _ref="$3"
+    check_stream_url "$_url"
     _player_pid=""   # set only when a player is backgrounded (see episode_loop wait)
     _hdr=""
     [ -n "$_ref" ] && _hdr="--http-header-fields=Referer:$_ref"
@@ -495,9 +519,9 @@ play_url() {
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup $player_function $player_extra $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
+                nohup $player_function $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
             else
-                $player_function $player_extra $_hdr --force-media-title="$_name" "$_url"
+                $player_function $_hdr --force-media-title="$_name" "$_url"
                 return $?
             fi
             ;;
@@ -524,6 +548,17 @@ play_url() {
 
 # ─── Download ───────────────────────────────────────────────────────────────
 
+# Print the first real file for a download base path, ignoring the in-flight
+# staging suffixes. Any container counts, not just .mp4: a source that can't
+# mux into MP4 is saved as e.g. .mkv by the container fallback in do_download.
+dl_find() {
+    for _f in "$1".*; do
+        [ -e "$_f" ] || continue
+        case "$_f" in *.part|*.ytdl) ;; *) printf '%s' "$_f"; return 0 ;; esac
+    done
+    return 1
+}
+
 # reject downloads that turned out to be HTML/XML/JSON/plain error pages
 _stage_ok() {
     [ -s "$1" ] || { rm -f "$1"; return 1; }
@@ -532,7 +567,7 @@ _stage_ok() {
         # text bodies a CDN returns for a 200-with-error-page. No real media
         # container starts with any of these (ftyp/1A45DFA3/RIFF/OggS/PK are
         # what real files begin with), so nothing legitimate is rejected.
-        \<\!\ *|\<\!DOCT*|\<html*|\<HTML*|\<\?xml*|[{[]*|"Access denied"*|"Not Found"*|"Not found"*|"Forbidden"*)
+        \<\!\ *|\<\!DOCT*|\<html*|\<HTML*|\<\?xml*|\{*|\[*|"Access denied"*|"Not Found"*|"Not found"*|"Forbidden"*)
             rm -f "$1"
             return 1 ;;
     esac
@@ -559,11 +594,17 @@ do_download() {
     _name="$2"
     _ref="$3"
     [ -z "$_url" ] && die "No URL to download"
+    check_stream_url "$_url"
     # allow relative subpaths in the name ("Title/season-1/S1E01") — kept for
     # -D organization; the full relational path is created under download_dir
     _dl_dir="$(dirname "$_name")"
     _dl_name="$(basename "$_name")"
-    [ -z "$_dl_dir" ] || [ "$_dl_dir" = "." ] && _dl_dir=""
+    # sanitize() keeps "." so a ".." title survives it; _dl_dir is dirname() of
+    # the UNSANITISED name, so a hostile title escapes download_dir by one level.
+    case "/${_dl_dir}/" in
+        */../*|*/./*) _dl_dir="" ;;
+        *) [ "$_dl_dir" = "." ] && _dl_dir="" ;;
+    esac
     _dl_safe="$(sanitize "$_dl_name")"
     _dl_file="${download_dir}${_dl_dir:+/${_dl_dir}}/${_dl_safe}.mp4"
     _dl_base="${_dl_file%.mp4}"
@@ -571,11 +612,7 @@ do_download() {
 
     # Already exists — any container, not just .mp4 (a source that can't mux
     # into MP4 saves as e.g. .mkv via the fallback below; skip it next time)
-    _dl_existing=""
-    for _f in "$_dl_base".*; do
-        [ -e "$_f" ] || continue
-        case "$_f" in *.part|*.ytdl) ;; *) _dl_existing="$_f"; break ;; esac
-    done
+    _dl_existing="$(dl_find "$_dl_base")"
     [ -n "$_dl_existing" ] && { warn "Already exists: $_dl_existing (delete it if a previous download was interrupted)"; return 0; }
 
     # Fail fast on provider-side dead links: a 1-byte range probe rejects
@@ -609,7 +646,7 @@ do_download() {
     # the feedback there instead.
     _yt="--no-warnings --quiet"
     if [ -n "$quiet_dl" ]; then _yt="$_yt --no-progress"; else _yt="$_yt --progress"; fi
-    # local stamped playlist (popmovie) — yt-dlp needs file:// + enable-file-urls
+    # a local playlist/manifest — yt-dlp needs file:// + enable-file-urls
     _dl_arg="$_url"; _file_flag=""
     if [ -f "$_url" ]; then
         _dl_arg="file://$_url"; _file_flag="--enable-file-urls"
@@ -637,7 +674,9 @@ do_download() {
         # EACCES/EINVAL), then exits non-zero with a complete .part still on
         # disk. Promote it instead of discarding a finished file: only when
         # it is substantial and not an error page.
-        if [ "$_rc" -ne 0 ] && [ -s "$_pt" ] && [ "$(stat -c%s "$_pt" 2>/dev/null)" -gt 10485760 ] && _stage_ok "$_pt"; then
+        # wc -c, not stat -c%s: BSD/macOS stat has no -c, so the test errored
+        # and this recovery never ran — the finished file was deleted below
+        if [ "$_rc" -ne 0 ] && [ -s "$_pt" ] && [ "$(wc -c < "$_pt" 2>/dev/null)" -gt 10485760 ] && _stage_ok "$_pt"; then
             mv -f "$_pt" "$_dl_file" 2>/dev/null && { ok "Saved: $_dl_file (yt-dlp .part recovery)"; return 0; }
         fi
         # a source that cannot be muxed into MP4 (e.g. vp9/opus HLS) fails
@@ -652,11 +691,7 @@ do_download() {
             fi
             _rc=$?
             if [ "$_rc" -ge 130 ]; then warn "Interrupted."; rm -f "$_dl_base".* 2>/dev/null; return "$_rc"; fi
-            _real=""
-            for _f in "$_dl_base".*; do
-                [ -e "$_f" ] || continue
-                case "$_f" in *.part|*.ytdl) ;; *) _real="$_f"; break ;; esac
-            done
+            _real="$(dl_find "$_dl_base")"
             if [ "$_rc" -eq 0 ] && [ -n "$_real" ] && _stage_ok "$_real"; then
                 _dl_file="$_real"
                 ok "Saved: $_dl_file"
@@ -794,7 +829,7 @@ episode_loop() {
                 _new_q=$(printf '%s\n' "$_qq" | pick_quality_menu "Quality: " || true)
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
-                _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
+                _ep_total=$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)
                 ;;
             change_season)
                 printf "" > "$tmpfile3"
@@ -808,13 +843,88 @@ episode_loop() {
                 [ -z "$_sn" ] && continue
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
-                _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
-                _cur_ep=1
+                # last episode NUMBER, not the count: episode_loop reads this
+                # against _cur_ep, so a count breaks any non-1-based season
+                _ep_total=$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)
+                # first episode of the season, not 1 — absolute numbering
+                # (get_episode_url 1 is empty, so episode_loop breaks)
+                _cur_ep=$(printf '%s\n' "$_ep_list" | head -1 | cut -f1)
                 ;;
             quit)           break ;;
             *)              break ;;
         esac
     done
+}
+
+# Whole-season dumps: some providers ship a season as one archive rather than
+# per-episode links (.season_zip, "Season N : URL,Label,QUAL : URL2,...").
+# Returns 0 when it handled the season, 1 when there was nothing to play.
+#   $1 title, $2 slug, $3 season
+play_season_zip() {
+    _z_sn="$3"; _title="$1"; _slug="$2"
+    _zip="$(jq -r '.season_zip // empty' "$tmpfile2")"
+    [ -n "$_zip" ] || return 1
+    _zip_line="$(printf "%s\n" "$_zip" | grep -E "^Season ${_z_sn} : " | head -n 1)"
+    [ -n "$_zip_line" ] || return 1
+    _variants="$(printf "%s" "$_zip_line" | sed 's/^Season [0-9]* : //; s/ : /\n/g')"
+    # order candidates: requested quality first, then the rest (the other
+    # variant uses a different workers URL — if the chosen one resolves to a
+    # stale signed URL, its sibling may still be fresh)
+    if [ "$quality" != "best" ]; then
+        _match="$(printf "%s\n" "$_variants" | awk -F',' -v q="$quality" 'tolower($NF)==tolower(q){print}')"
+        if [ -n "$_match" ]; then
+            _ordered="$(printf "%s\n%s\n" "$_match" "$_variants" | awk '!seen[$0]++')"
+        else
+            _ordered="$_variants"
+        fi
+    else
+        _ordered="$(printf "%s\n%s\n" "$(printf "%s\n" "$_variants" | tail -1)" "$_variants" | awk '!seen[$0]++')"
+    fi
+    # resolve + probe (1-byte range) each candidate: the workers resolver
+    # sometimes returns a stale expired signed URL (403); drop those before
+    # committing to a multi-GB download
+    _resolved=""
+    _label=""
+    printf "%s\n" "$_ordered" > "$tmpfile3"
+    while IFS= read -r _cand; do
+        [ -n "$_resolved" ] && break
+        _u="$(printf "%s" "$_cand" | cut -d',' -f1 | sed 's/^ *//;s/ *$//')"
+        _try=1
+        while [ "$_try" -le 3 ]; do
+            _r="$(resolve_stream_url "$_u")"
+            if [ -n "$_r" ] && curl -sfL -r 0-0 -o /dev/null --max-time 30 "$_r" 2>/dev/null; then
+                _resolved="$_r"
+                _label="$(printf "%s" "$_cand" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
+                break
+            fi
+            _try=$(( _try + 1 ))
+            [ "$_try" -le 3 ] && sleep 1
+        done
+    done < "$tmpfile3"
+    if [ -z "$_resolved" ]; then
+        warn "Failed to resolve season $_z_sn URL."
+        return 1
+    fi
+    info "Playing ${_title} :: ${_label}"
+    case "$_resolved" in
+        *.zip|*.zip?*)
+            # whole-season archive: not streamable — download it instead
+            info "Season $_z_sn is a ZIP archive — downloading instead of streaming."
+            _zspec="$(sanitize "$_title")"
+            mkdir -p "$download_dir"
+            # the label is remote text — flatten it to one sanitised path
+            # component so it cannot traverse out of the download dir via .. or /
+            _zlabel="$(printf "%s" "${_label##*/}" | sed 's/[^a-zA-Z0-9 ._-]//g')"
+            do_download "$_resolved" "${_zspec}/season-${_z_sn}/${_zlabel}"
+            update_history "$_slug" "$_title" series "$_z_sn" 0
+            return 0
+            ;;
+    esac
+    play_url "$_resolved" "${_title} :: ${_label}"
+    _pl_rc=$?
+    [ "$exit_after_play" = 1 ] && exit "$_pl_rc"
+    update_history "$_slug" "$_title" series "$_z_sn" 0
+    return 0
 }
 
 prompt_action() {
@@ -830,7 +940,12 @@ prompt_action() {
         if [ "$_sc" -eq 1 ]; then
             _sn=1
         elif [ -n "$resume_season" ]; then
-            _sn="$resume_season"
+            # digits only: this is interpolated into a jq program below, and a
+            # history file is attacker-writable via a title containing a newline
+            case "$resume_season" in
+                ''|*[!0-9]*) resume_season="" ;;
+            esac
+            _sn="${resume_season:-1}"
         else
             printf "" > "$tmpfile3"
             _i=1
@@ -847,80 +962,14 @@ prompt_action() {
         [ -z "$_season_text" ] && warn "No season data." && return 1
         _ep_list=$(parse_episodes "$_season_text" "$quality")
 
-        # Whole-season dumps ("Season N : URL,Label,QUAL : URL2,..." in
-        # .season_zip) have no per-episode data — play the season file.
+        # no per-episode data: some providers ship the season as one archive
         if [ -z "$_ep_list" ]; then
-            _zip="$(jq -r '.season_zip // empty' "$tmpfile2")"
-            if [ -n "$_zip" ]; then
-                _zip_line="$(printf "%s\n" "$_zip" | grep -E "^Season ${_sn} : " | head -n 1)"
-                if [ -n "$_zip_line" ]; then
-                    _variants="$(printf "%s" "$_zip_line" | sed 's/^Season [0-9]* : //; s/ : /\n/g')"
-                    # order candidates: requested quality first, then the rest
-                    # (the other variant uses a different workers URL — if the
-                    # chosen one resolves to a stale signed URL, its sibling
-                    # may still be fresh)
-                    if [ "$quality" != "best" ]; then
-                        _match="$(printf "%s\n" "$_variants" | awk -F',' -v q="$quality" 'tolower($NF)==tolower(q){print}')"
-                        if [ -n "$_match" ]; then
-                            _ordered="$(printf "%s\n%s\n" "$_match" "$_variants" | awk '!seen[$0]++')"
-                        else
-                            _ordered="$_variants"
-                        fi
-                    else
-                        _ordered="$(printf "%s\n%s\n" "$(printf "%s\n" "$_variants" | tail -1)" "$_variants" | awk '!seen[$0]++')"
-                    fi
-                    # resolve + probe (1-byte range) each candidate: the workers
-                    # resolver sometimes returns a stale expired signed URL
-                    # (403); drop those before committing to a multi-GB download
-                    _resolved=""
-                    _label=""
-                    printf "%s\n" "$_ordered" > "$tmpfile3"
-                    while IFS= read -r _cand; do
-                        [ -n "$_resolved" ] && break
-                        _u="$(printf "%s" "$_cand" | cut -d',' -f1 | sed 's/^ *//;s/ *$//')"
-                        _try=1
-                        while [ "$_try" -le 3 ]; do
-                            _r="$(resolve_stream_url "$_u")"
-                            if [ -n "$_r" ] && curl -sfL -r 0-0 -o /dev/null --max-time 30 "$_r" 2>/dev/null; then
-                                _resolved="$_r"
-                                _label="$(printf "%s" "$_cand" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
-                                break
-                            fi
-                            _try=$(( _try + 1 ))
-                            [ "$_try" -le 3 ] && sleep 1
-                        done
-                    done < "$tmpfile3"
-                    if [ -z "$_resolved" ]; then
-                        warn "Failed to resolve season $_sn URL."
-                        return 1
-                    fi
-                    info "Playing ${_title} :: ${_label}"
-                    case "$_resolved" in
-                        *.zip|*.zip?*)
-                            # whole-season archive (Vegamovies-style ZIP dump):
-                            # not streamable — download it instead
-                            info "Season $_sn is a ZIP archive — downloading instead of streaming."
-                            _zspec="$(sanitize "$_title")"
-                            mkdir -p "$download_dir"
-                            # the label is remote text — flatten it to one
-                            # sanitised path component so it cannot traverse
-                            # out of the download dir via .. or /
-                            _zlabel="$(printf "%s" "${_label##*/}" | sed 's/[^a-zA-Z0-9 ._-]//g')"
-                            do_download "$_resolved" "${_zspec}/season-${_sn}/${_zlabel}"
-                            update_history "$_slug" "$_title" series "$_sn" 0
-                            return 0
-                            ;;
-                    esac
-                    play_url "$_resolved" "${_title} :: ${_label}"
-                    [ "$exit_after_play" = 1 ] && exit $?
-                    update_history "$_slug" "$_title" series "$_sn" 0
-                    return 0
-                fi
-            fi
-            warn "No episodes found."
-            return 1
+            play_season_zip "$_title" "$_slug" "$_sn" || { warn "No episodes found."; return 1; }
+            return 0
         fi
 
+        # a COUNT, unlike episode_loop's _ep_total: only the "-eq 1" check
+        # below reads it, and episode_loop recomputes it as a number
         _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
 
         # Episode selection: -e flag, resume, or interactive
@@ -937,9 +986,11 @@ prompt_action() {
                     done
                     _ep_pick=$(menu "Episodes (Season $_sn): " "${menu_multi_flag}" < "$tmpfile3")
                     [ -z "$_ep_pick" ] && return 1
-                    # multi-select: use min/max picked as a range
-                    _ep_first=$(printf "%s" "$_ep_pick" | head -1 | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
-                    _ep_last=$(printf "%s" "$_ep_pick" | tail -1 | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
+                    # min/max picked as a range. fzf -m prints in SELECTION
+                    # order, not sorted, so pick 5 then 2 would give
+                    # first=5 last=2 and silently drop the range
+                    _ep_first=$(printf "%s" "$_ep_pick" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+' | sort -n | head -1)
+                    _ep_last=$(printf "%s" "$_ep_pick" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1)
                     _cur_ep="$_ep_first"
                     [ "$_ep_first" != "$_ep_last" ] && _range_end="$_ep_last"
                 fi
@@ -981,13 +1032,9 @@ prompt_action() {
     if [ -z "$_links" ]; then
         # hicine has the title but no playable links — same fallback chain
         # as a search miss, so item-level dead entries don't hard-stop
-        warn "No links on server-1 — trying server-2, then server-3."
         # search the original query, not the hicine item's (possibly stub)
         # title — e.g. 'xman' resolves to a dead trailer-stub entry
-        _fallback_q="${query:-$_title}"
-        _backup_used=1; pop_search "$_fallback_q"
-        _sr=$?
-        [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_fallback_q" || cmd_zxc "$_fallback_q"
+        provider_chain "${query:-$_title}" "title has no links"
         return
     fi
 
@@ -1049,24 +1096,30 @@ prompt_action() {
 
 # ─── Commands ───────────────────────────────────────────────────────────────
 
+# The single place that decides WHEN to fall through and to WHOM.
+#   $1 = query, $2 = why server-1 came up empty (for the message)
+# Returns 1 without touching anything when only an info card was wanted —
+# -i should not launch a full playback search on a backup.
+provider_chain() {
+    if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
+        warn "No result on server-1 ($2) — trying the mirrors, then anime."
+        _backup_used=1
+        cmd_mirrors "$1" || cmd_anime "$1"
+        return $?
+    fi
+    return 1
+}
+
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
-    [ "$provider" = "popmovie" ] && { pop_search "$_query"; return; }
     _encoded=$(henc "$_query")
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
-        if [ "$info_only" -eq 0 ] && [ "$download_all_mode" -eq 0 ]; then
-            warn "server-1 unreachable — trying server-2, then server-3."
-            _backup_used=1; pop_search "$_query"; _sr=$?
-            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query" || cmd_zxc "$_query"
-        elif [ "$download_all_mode" -eq 1 ]; then
-            warn "server-1 unreachable — trying server-2, then server-3."
-            _backup_used=1; pop_search "$_query"; _sr=$?
-            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query" || cmd_zxc "$_query"
-        else
-            die "Search failed: ${API} unreachable"
-        fi
+        # die before the chain: an unreachable API is not the same as a miss,
+        # and -i must not turn a dead endpoint into a 15 s mirror search
+        [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
+        provider_chain "$_query" "API unreachable"
         return
     fi
     select_item
@@ -1076,14 +1129,7 @@ cmd_search() {
             # user cancelled the picker — exit quietly, no provider chain
             return 0
         fi
-        if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
-            warn "Not on server-1 — trying server-2, then server-3."
-            _backup_used=1; pop_search "$_query"
-            _sr=$?
-            [ "$_pop_found" = 1 ] || [ "$_sr" = 0 ] || cmd_anime "$_query" || cmd_zxc "$_query"
-        else
-            warn "No results found for: $_query"
-        fi
+        provider_chain "$_query" "no results" || warn "No results found for: $_query"
         return
     fi
     [ "$info_only" -eq 1 ] && show_info
@@ -1140,7 +1186,7 @@ cmd_stats() {
 # ─── Anime provider
 
 anidb_curl() {
-    $curl_exe -sL -A "$anime_agent" --max-time 10 "$@"
+    $curl_exe -sL -A "$vicine_ua" --max-time 10 "$@"
 }
 
 # search → lines "anime_id<TAB>title"
@@ -1183,7 +1229,7 @@ zoko_src_of() {
 
 # CDN calls are referer-gated by hls.1embed.buzz
 anime_cdn_curl() {
-    $curl_exe -sL -A "$anime_agent" -e "$anime_embed_ref" --max-time 15 "$@"
+    $curl_exe -sL -A "$vicine_ua" -e "$anime_embed_ref" --max-time 15 "$@"
 }
 
 # m3u8 variant parser: reads a master playlist on stdin, prints "RESp>URL"
@@ -1272,7 +1318,7 @@ anime_play_episode() {
         info "Playing ep ${_ep_no}: ${anime_title}"
         play_url "$_video_link" "$anime_title - Episode $_ep_no" "$anime_embed_ref"
         _rc=$?
-        update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
+        [ "$_rc" -eq 0 ] && update_history "$anime_id" "$anime_title" anime 0 "$_ep_no"
         [ "$exit_after_play" = 1 ] && exit "$_rc"
     fi
 }
@@ -1286,6 +1332,8 @@ anime_play_loop() {
             break
         fi
         anime_play_episode "$_cur_ep"
+        _rc=$?
+        [ "$_rc" -ge 130 ] && exit "$_rc"
 
         # auto-advance in range mode
         if [ -n "$_range_end" ]; then
@@ -1509,416 +1557,258 @@ cmd_anime() {
     anime_play_loop
 }
 
-# ─── ZXC provider (zxcstream.icu + vidstuck.xyz) ────────────────────────────
-# Catalog: zxcstream /database/* (TMDB-shaped JSON, no auth). Streams resolve
-# through vidstuck: meow → token, servers/andromeda → AES-encrypted internal
-# path (key hardcoded in their bundle), /backend/database → DASH MPD.
-ZXC_AES_KEY="7f4c9e2a81d63b05c4f7a9e8126d3b50e1a8c7f23d9465ab0c6e9f1d4a7b832c"
-ZXC_UO="a7f39c821d604e5b9c71f36e1547b"; ZXC_UP="c285f91ab306d28147a35632e816b"; ZXC_UG="6b491e7253ad84d392e7561a9384c"
-ZXC_UL="61d9a5274c8e3b29afd6384c291e6"; ZXC_UU="c492f7a183d6502b1e7436c538a716d"
-ZXC_UD="5e28c9147a306d1e829f3674b392a1"; ZXC_UC="b731e6c94f08269d725f8341c306e"; ZXC_UM="e164932c50216a39e5814b3027"
-ZXC_IM="f35a8c19d674b3265e871c4933a725f"
-zxc_cookies="${tmpfile}.zxc"
+# ─── Mirror providers ───────────────────────────────────────────────────────
+# Film fallbacks, tried before the anime provider: a general query should
+# exhaust the film catalogues before hitting an anime-only one. The sites'
+# own search (?s=) is dead — it redirects to a parked domain — so discovery
+# goes through the sitemap index, which is plain XML and needs no auth. Streams
+# are a 3-hop chain: title page -> nexdrive.fit -> fastdl.zip/embed?download=
+# TOKEN -> a direct googleusercontent URL.
+#
+# The sitemap pull is the expensive part: ~14 and ~8 files, fetched with 8-way
+# parallelism for ~12 s together. A Typesense/Algolia endpoint would be one
+# call each, but it is only reachable from the sites' lazy-loaded JS, not from
+# the page.
+#
+# Every entry is the same operator: the same WordPress theme, the same
+# gateway chain, the same dead client-side search. Two more siblings
+# (gokuhd.com, xprimehub.pics) were measured and dropped; see the CHANGELOG.
+MIRROR_HOSTS="vegamovies.gallery
+rogmovies.best"
 
-# curl with the zxc/vidstuck session cookie jar
-zxcurl() {
-    # the vidstuck backend rejects calls without Origin/Referer
-    curl -s -c "$zxc_cookies" -b "$zxc_cookies" -A "$anime_agent"         -H 'Origin: https://vidstuck.xyz' -H 'Referer: https://vidstuck.xyz/' "$@"
+# the post-sitemap URLs a host's sitemap index lists
+mirror_sitemaps() { # host
+    curl -sfL --max-time 20 -A "$vicine_ua" "https://$1/sitemap.xml" 2>/dev/null \
+        | grep -oE '<loc>[^<]+</loc>' \
+        | sed 's|<loc>||; s|</loc>||' \
+        | grep -E '/post-sitemap[0-9]*\.xml$'
 }
 
-# earn the Cloudflare/session cookie the backend requires
-zxc_warm() {
-    zxcurl -m 15 "https://zxcstream.icu/movie" -o /dev/null
-}
-
-# query -> "id<TAB>title<TAB>year" (zxcstream catalog, TMDB-shaped)
-zxc_search() {
-    _q=$(henc "$1")
-    zxcurl -m 15 "https://zxcstream.icu/database/search/movie?query=${_q}&language=en-US" |
-        jq -r '.results[]? | [.id, .title, (.release_date // "" | .[0:4])] | @tsv'
-}
-
-# id -> "title<TAB>year<TAB>date<TAB>imdb"
-zxc_details() {
-    zxcurl -m 15 "https://vidstuck.xyz/backend/tmdb/details/movie/${1}?language=en-US" |
-        jq -r '[.title // "", (.release_date // "" | .[0:4]), (.release_date // ""), (.imdb_id // "")] | @tsv'
-}
-
-# id title year date imdb -> prints the final DASH MPD
-zxc_resolve() {
-    _id="$1"; _title="$2"; _year="$3"; _date="$4"; _imdb="$5"
-    _m="$(zxcurl -X POST -H 'Content-Type: application/json' -d "{\"$ZXC_UO\":$_id,\"$ZXC_UP\":\"movie\",\"$ZXC_UG\":\"andromeda\"}" 'https://vidstuck.xyz/backend/meow')"
-    _tok="$(printf '%s' "$_m" | jq -r '.token // empty')"; _ts="$(printf '%s' "$_m" | jq -r '.ts // empty')"
-    [ -n "$_tok" ] || return 1
-    _te=$(henc "$_title")
-    _s="$(zxcurl -m 15 "https://vidstuck.xyz/backend/servers/andromeda?$ZXC_UO=$_id&$ZXC_UG=andromeda&$ZXC_UP=movie&$ZXC_UL=$_ts&$ZXC_UU=$_tok&$ZXC_UD=$_te&$ZXC_UC=$_year&$ZXC_UM=$_date&$ZXC_IM=$_imdb")"
-    _link="$(printf '%s' "$_s" | jq -r '.links[0].link // empty')"
-    [ -n "$_link" ] && [ "$_link" != "null" ] || return 1
-    _int="$(printf '%s' "$_link" | openssl enc -d -aes-256-cbc -a -A -md md5 -pass "pass:$ZXC_AES_KEY" 2>/dev/null)"
-    [ -n "$_int" ] || return 1
-    zxcurl -L -m 30 "https://vidstuck.xyz${_int}"
-}
-
-cmd_zxc() {
-    _q="$1"
-    [ -z "$_q" ] && die "Missing zxc query"
-    command -v openssl >/dev/null 2>&1 || die "zxc provider needs openssl"
-    info "Searching (zxc): $_q"
-    _list="$(zxc_search "$_q")"
-    [ -z "$_list" ] && { warn "No results on zxc."; return 1; }
-    _pick="$(printf '%s\n' "$_list" | nl -w2 | sed 's/^ *//;s/\t/  /' | menu "Select (zxc): " || true)"
-    [ -z "$_pick" ] && return 0
-    _id="$(printf '%s\n' "$_list" | sed -n "$(printf '%s' "$_pick" | awk '{print $1+0}')p" | cut -f1)"
-    zxc_warm
-    zxcurl -m 15 "https://vidstuck.xyz/embed/movie/${_id}" -o /dev/null
-    _d="$(zxc_details "$_id")"
-    _tt="$(printf '%s' "$_d" | cut -f1)"; _yr="$(printf '%s' "$_d" | cut -f2)"
-    _dt="$(printf '%s' "$_d" | cut -f3)"; _im="$(printf '%s' "$_d" | cut -f4)"
-    _mpd="$(zxc_resolve "$_id" "$_tt" "$_yr" "$_dt" "$_im")"
-    [ -n "$_mpd" ] || { warn "No stream found."; return 1; }
-    printf '%s\n' "$_mpd" > "$tmpfile5"
-    _zsafe="$(sanitize "$_tt")"
-    if [ "$player_function" = "download" ]; then
-        do_download "$tmpfile5" "$_zsafe"
-        return $?
-    fi
-    info "Playing: $_tt"
-    player_extra="--demuxer-lavf-o=protocol_whitelist=file,https,tls,crypto,data"
-    play_url "$tmpfile5" "$_tt"
-    update_history "zxc-$_id" "$_tt" movie 0 0
-}
-
-# ─── Popmovie provider ──────────────────────────────────────────────────────
-# Backup provider (VICINE_PROVIDER=popmovie). Catalog: TMDB through
-# popmovie.online's proxy. Streams: vidsrc.sh's data API
-# (data.vidsrc.sh/api.php) — plain JSON, or a ChaCha20-wasm envelope that
-# needs node to decrypt; every stream host requires a per-host JWT from
-# <host>/generate.php appended as ?token= (IP-bound, ~4h). Episodes resolve
-# per (tmdb id, season, episode).
-
-POP_REF="https://vidsrc.sh/"
-pop_tok=""; pop_tok_host=""
-
-# raw url -> url with the per-host JWT appended (cache one token per host)
-pop_stamp() {
-    _h="$(printf '%s\n' "$1" | sed -E 's#(https?://[^/]+).*#\1#')"
-    if [ "$_h" != "$pop_tok_host" ]; then
-        pop_tok="$(curl -sL --max-time 10 -A "$anime_agent" "$_h/generate.php")"
-        pop_tok_host="$_h"
-    fi
-    [ -z "$pop_tok" ] && { printf '%s\n' "$1"; return; }
-    case "$1" in
-        *__TOKEN__*) printf '%s\n' "$1" | sed "s|__TOKEN__|$pop_tok|" ;;
-        *)           printf '%s\n' "$1" | sed "s|$|?token=$pop_tok|" ;;
-    esac
-}
-
-# _stamp_line: helper for pop_m3u8 — absolute-ize + token-stamp one URL
-pop_stamp_url() {
-    _su="$1"
-    case "$_su" in
-        https?://*) printf '%s' "$_su" ;;
-        *) [ "${_su#/}" = "$_su" ] && _su="/$_su"; printf '%s%s' "$pop_m3u8_host" "$_su" ;;
-    esac
-}
-
-# Fetch the (master-tokenstamped) playlist, pick the -q variant, then rewrite
-# every URI/segment to an absolute token-carrying URL into the shared local
-# $tmpfile5. Segments would otherwise 403 — the JS player rewrites them
-# client-side; mpv/yt-dlp can't. Honors quality via the RESOLUTION ladder.
-pop_m3u8() {
-    _u="$1"
-    pop_m3u8_host="$(printf '%s' "$_u" | sed -E 's#(https?://[^/]+).*#\1#')"
-    _tok="${_u##*token=}"
-    pop_m3u8_qs="?token=${_tok}"
-    _master="$(curl -sL --max-time 15 -A "$anime_agent" -e "$POP_REF" "$_u")" || return 1
-    [ -n "$_master" ] || return 1
-    # pair each STREAM-INF height with the following variant URL
-    _pairs="$(printf '%s\n' "$_master" | awk '
-        /^#EXT-X-STREAM-INF:/ { h=""; if (match($0, /RESOLUTION=[0-9]+x[0-9]+/)) { r=substr($0, RSTART, RLENGTH); sub(/^RESOLUTION=[0-9]+x/, "", r) } h=r; next }
-        /^[^#]/ { if (h != "") { print h "\t" $0; h="" } }')"
-    if [ "$quality" = "best" ]; then
-        _cv="$(printf '%s\n' "$_pairs" | sort -t"	" -k1,1n | tail -1 | cut -f2-)"
-    else
-        _hv="${quality%p}"
-        _cv="$(printf '%s\n' "$_pairs" | awk -v h="$_hv" -F"	" '$1==h{print $2; exit}')"
-        [ -n "$_cv" ] || _cv="$(printf '%s\n' "$_pairs" | sort -t"	" -k1,1n | tail -1 | cut -f2-)"
-    fi
-    case "$_cv" in
-        https?://*) _var="$_cv" ;;
-        *) _var="$(pop_stamp_url "$_cv")" ;;
-    esac
-    case "$_var" in
-        *token=*) : ;;
-        *__TOKEN__*) _var="$(printf '%s' "$_var" | sed "s|__TOKEN__|$_tok|")" ;;
-        *) case "$_var" in *\?*) _var="${_var}&token=${_tok}" ;; *) _var="${_var}?token=${_tok}" ;; esac ;;
-    esac
-    _vpl="$(curl -sL --max-time 15 -A "$anime_agent" -e "$POP_REF" "$_var")" || return 1
-    [ -n "$_vpl" ] || return 1
-    : > "$tmpfile5"
-    printf '%s\n' "$_vpl" | awk -v host="$pop_m3u8_host" -v qs="$pop_m3u8_qs" '
-        function stamp(u) {
-            if (u ~ /^https?:\/\//) { if (u ~ /token=/) return u; return u (u ~ /\?/ ? "&" : "?") substr(qs, 2) }
-            if (u ~ /^\//) { if (u ~ /token=/) return host u; return host u qs }
-            if (u ~ /token=/) return "/" u
-            return host "/" u qs
-        }
-        /#EXT-X-KEY:|URI="/ {
-            # single rewrite: re-emitting the closing quote makes the match
-            # succeed again, so a while-loop would spin forever on the same URI
-            if (match($0, /URI="[^"]*"/)) {
-                u = substr($0, RSTART+5, RLENGTH-6)
-                s = stamp(u)
-                $0 = substr($0, 1, RSTART+4) s "\"" substr($0, RSTART+RLENGTH)
-            }
-            print; next
-        }
-        /^#/ { print; next }
-        { print stamp($0) }' >> "$tmpfile5"
-    [ -s "$tmpfile5" ] && printf '%s' "$tmpfile5"
-}
-
-# api.php response -> line-delimited raw stream URLs (decrypts via node)
-pop_streams() {
-    _resp="$1"
-    if printf '%s' "$_resp" | jq -e '.data.stream_urls | type == "array"' >/dev/null 2>&1; then
-        printf '%s' "$_resp" | jq -r '.data.stream_urls[]'
-        return
-    fi
-    # the payload must carry either the plain stream list or a wasm
-    # envelope — anything else makes the node decrypt below crash with a
-    # raw stack (a failed/error JSON body from the provider). Fail cleanly.
-    printf '%s' "$_resp" | jq -e 'has("data") or has("vs")' >/dev/null 2>&1 || {
-        warn "popmovie returned an unexpected response."
-        return 1
-    }
-    command -v node >/dev/null 2>&1 || { warn "popmovie encrypted streams need node"; return 1; }
-    VSRESP="$_resp" node -e '
-      const j = JSON.parse(process.env.VSRESP);
-      const s = j.data.stream_urls;
-      if (Array.isArray(s)) { console.log(s.join("\n")); process.exit(0); }
-      if (!j.vs) process.exit(1);
-      const bytes = async () => j.vs.wasm_url
-        ? (await fetch(j.vs.wasm_url, { credentials: "omit" })).arrayBuffer()
-        : Buffer.from(j.vs.wasm, "base64");
-      (async () => {
-        const mod = await WebAssembly.compile(await bytes());
-        const ex = (await WebAssembly.instantiate(mod, {})).exports;
-        const raw = Buffer.from(s, "base64");
-        const ptr = ex.alloc(raw.length);
-        new Uint8Array(ex.memory.buffer, ptr, raw.length).set(raw);
-        const len = ex.decrypt(ptr, raw.length);
-        console.log(new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ptr + 12, len)));
-        process.exit(0);
-      })().catch(() => process.exit(1));'
-}
-
-# (type,id[,season,episode]) -> stamped master URL (first = best)
-pop_resolve() {
-    _t="$1"; _id="$2"; _api="https://data.vidsrc.sh/api.php?type=${_t}&tmdb=${_id}"
-    [ "$_t" = "tv" ] && _api="${_api}&season=$3&episode=$4"
-    _api="${_api}&stream_urls"
-    _resp="$(curl -sL --max-time 20 -A "$anime_agent" -e "$POP_REF" "$_api")" || return 1
-    [ -z "$_resp" ] && return 1
-    _urls="$(pop_streams "$_resp")" || return 1
-    [ -z "$_urls" ] && return 1
-    pop_stamp "$(printf '%s\n' "$_urls" | head -1)"
-}
-
-# play a local stamped playlist: pipe through yt-dlp when available (mpv's
-# lavf whitelist can't take comma lists on modern builds, blocking https
-# segments from a local file); fall back to direct mpv (works on permissive
-# builds). Piping costs seeking — fine for a backup provider.
-pop_play() {
-    _pl="$1"; _name="$2"
-    if command -v yt-dlp >/dev/null 2>&1; then
-        # scrub shell-hostile chars from the title before embedding it in
-        # bash -c (apostrophes are realistic in TMDB titles)
-        _ptt="$(printf "%s" "$_name" | tr -d "'")"
-        if [ "$exit_after_play" = 1 ] || [ "$no_detach" = 1 ]; then
-            yt-dlp --enable-file-urls --no-playlist -f 'b' -o - "file://$_pl" | $player_function --force-media-title="$_name" -
-            return $?
-        fi
-        nohup bash -c "yt-dlp --enable-file-urls --no-playlist -f 'b' -o - 'file://$1' | $player_function --force-media-title='$_ptt' -" > "$tmpfile4" 2>&1 &
-        return 0
-    fi
-    player_extra="--demuxer-lavf-o=protocol_whitelist=file,https,tls,crypto,data"
-    [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ] || { $player_function $player_extra --force-media-title="$_name" "$_pl"; return $?; }
-    nohup $player_function $player_extra --force-media-title="$_name" "$_pl" > "$tmpfile4" 2>&1 &
-}
-
-pop_play_ep() { # id season ep title — resolve + play/download one episode
-    _id="$1"; _sn="$2"; _ep="$3"; _title="$4"
-    _u="$(pop_resolve tv "$_id" "$_sn" "$_ep")" || { warn "No stream for S${_sn}E${_ep}."; return 1; }
-    [ -z "$_u" ] && { warn "No stream for S${_sn}E${_ep}."; return 1; }
-    _pl="$(pop_m3u8 "$_u")" || { warn "No stream for S${_sn}E${_ep}."; return 1; }
-    if [ "$download_all_mode" = 1 ]; then
-        _safe="$(sanitize "$_title")"
-        do_download "$_pl" "${_safe}/season-${_sn}/S${_sn}E$(printf '%02d' "$_ep")"
-        return $?
-    fi
-    info "Playing S${_sn}E${_ep}: ${_title}"
-    pop_play "$_pl" "${_title} - S${_sn}E${_ep}"
-    _rc=$?
-    update_history "$_id" "$_title" series "$_sn" "$_ep"
-    [ "$exit_after_play" = 1 ] && exit "$_rc"
-}
-
-pop_series() { # id title
-    _id="$1"; _title="$2"
-    _det="$(curl -sL --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/tv/${_id}")"
-    [ -z "$_det" ] && { warn "Details failed."; return 1; }
-    _sc="$(printf '%s' "$_det" | jq -r '[.seasons[] | select(.season_number > 0)] | length' 2>/dev/null)"
-    [ "${_sc:-0}" -gt 0 ] 2>/dev/null || { warn "No season data."; return 1; }
-    if [ -n "$resume_season" ] && [ "$resume_season" -le "$_sc" ] 2>/dev/null; then
-        _sn="$resume_season"
-    elif [ "$_sc" -eq 1 ]; then
-        _sn=1
-    else
-        printf "" > "$tmpfile3"; _i=1
-        while [ "$_i" -le "$_sc" ]; do printf "Season %s\n" "$_i" >> "$tmpfile3"; _i=$(( _i + 1 )); done
-        _sp=$(menu "Seasons for ${_title}: " < "$tmpfile3") || return 1
-        _sn=$(printf "%s" "$_sp" | grep -o '[0-9]*')
-    fi
-    [ -z "$_sn" ] && return 1
-    _eps_json="$(curl -sL --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/tv/${_id}/season/${_sn}")"
-    _ep_list="$(printf '%s' "$_eps_json" | jq -r '.episodes[]? | .episode_number')"
-    [ -z "$_ep_list" ] && { warn "No episodes in season $_sn."; return 1; }
-    _ep_total=$(printf '%s\n' "$_ep_list" | wc -l | tr -d ' ')
-
-    # download-all: pick a range (TTY) or everything, then fetch sequentially
-    if [ "$download_all_mode" = 1 ]; then
-        _dl_from=""; _dl_to=""
-        if [ -t 0 ]; then
-            printf "\n  Episode range to download (e.g. 1-$_ep_total, empty = all): "
-            read -r _dl_range
-            [ -n "$_dl_range" ] && _dl_from=$(printf '%s' "$_dl_range" | grep -oE '[0-9]+' | head -1) && _dl_to=$(printf '%s' "$_dl_range" | grep -oE '[0-9]+' | tail -1)
-        fi
-        printf '%s\n' "$_ep_list" | awk -v f="$_dl_from" -v t="$_dl_to" '{ if (f != "" && $1 < f) next; if (t != "" && $1 > t) next; print }' > "$tmpfile3"
-        # read from a file, not a pipeline — pop_play_ep may exit (Ctrl-C,
-        # --exit-after-play) and that must reach the parent shell
-        while IFS= read -r _epn; do
-            pop_play_ep "$_id" "$_sn" "$_epn" "$_title"
-        done < "$tmpfile3"
-        return
-    fi
-
-    # single play: -e / resume / menu
-    case "$requested_eps" in
-        "" ) if [ -n "$resume_ep" ]; then
-                _cur_ep="$resume_ep"
-             else
-                printf "" > "$tmpfile3"
-                printf '%s' "$_eps_json" | jq -r '.episodes[] | "Ep " + (.episode_number|tostring) + "  " + (.name // "")' >> "$tmpfile3"
-                _p=$(menu "Episodes (Season $_sn): " < "$tmpfile3") || return 1
-                _cur_ep=$(printf "%s" "$_p" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')
-             fi ;;
-        -1 ) _cur_ep=$(printf '%s\n' "$_ep_list" | tail -1) ;;
-        *-* ) _cur_ep=$(printf '%s' "$requested_eps" | grep -oE '[0-9]+' | head -1)
-              _rend=$(printf '%s' "$requested_eps" | grep -oE '[0-9]+' | tail -1)
-              [ -z "$_rend" ] && _rend="$_cur_ep" ;;
-        * )  _cur_ep="$requested_eps" ;;
-    esac
-    [ -z "$_cur_ep" ] && return 1
-    if ! printf '%s\n' "$_ep_list" | grep -qx "$_cur_ep"; then
-        warn "Episode $_cur_ep not available."; return 1
-    fi
-
-    _fails=0
-    while true; do
-        pop_play_ep "$_id" "$_sn" "$_cur_ep" "$_title"
-        _rc=$?
-        [ "$_rc" -ge 130 ] && return "$_rc"
-        # server-2 stream source down? bail after a few consecutive failures
-        # instead of repeating 'No stream for S1Ex.' for the whole season
-        if [ "$_rc" -ne 0 ]; then
-            _fails=$(( _fails + 1 ))
-            [ "$_fails" -ge 3 ] && { warn "server-2 stream source unreachable — giving up."; return 1; }
-        else
-            _fails=0
-        fi
-        # range auto-advance
-        if [ -n "$_rend" ]; then
-            if [ "$_cur_ep" -lt "$_rend" ]; then _cur_ep=$(( _cur_ep + 1 )); continue
-            else _rend=""; fi
-        fi
-        [ "$exit_after_play" = 1 ] && return 0
-        printf "" > "$tmpfile3"
-        printf "replay\n" >> "$tmpfile3"
-        [ "$_cur_ep" -gt 1 ] && printf "previous\n" >> "$tmpfile3"
-        [ "$_cur_ep" -lt "$_ep_total" ] && printf "next\n" >> "$tmpfile3"
-        printf "select\nquit\n" >> "$tmpfile3"
-        _c=$(menu "S${_sn}E${_cur_ep} ${_title}: " < "$tmpfile3") || break
-        case "$_c" in
-            next)     _cur_ep=$(( _cur_ep + 1 )) ;;
-            previous) _cur_ep=$(( _cur_ep - 1 )) ;;
-            replay)   : ;;
-            select)
-                printf "" > "$tmpfile3"
-                printf '%s' "$_eps_json" | jq -r '.episodes[] | "Ep " + (.episode_number|tostring) + "  " + (.name // "")' >> "$tmpfile3"
-                _p=$(menu "Select episode: " < "$tmpfile3") || break
-                _cur_ep="$(printf "%s" "$_p" | grep -oE '^Ep [0-9]+' | grep -oE '[0-9]+')"
-                [ -z "$_cur_ep" ] && break
-                ;;
-            *) break ;;
+# Query -> an ALL-words regex for the sitemap fallback: "kgf chapter 2" ->
+# "kgf.*chapter.*2". Common words are dropped so they cannot widen the match
+# (an ANY-word fallback would turn "kgf chapter 2" into Attack on Titan).
+mirror_words_regex() {
+    _mw_pat=""
+    for _mw_w in $(printf '%s' "$1" | tr ' ' '\n'); do
+        case "$_mw_w" in
+            the|a|an|of|and|in|to|for) continue ;;
         esac
+        [ -n "$_mw_w" ] || continue
+        if [ -z "$_mw_pat" ]; then _mw_pat="$_mw_w"; else _mw_pat="$_mw_pat.*$_mw_w"; fi
+    done
+    printf '%s' "$_mw_pat"
+}
+
+mirror_search() { # host query -> "url<TAB>title<TAB>type" lines
+    _vs_q="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+    [ -z "$_vs_q" ] && return 1
+    _vs_dir="$(mktemp -d "${TMPDIR:-/tmp}/VICINE.vega.XXXXXX")" || return 1
+    # the index is parsed rather than counting files: post-sitemap counts
+    # differ per host (3 to 34) and the first one is sometimes numbered
+    # ("post-sitemap.xml" vs "post-sitemap1.xml")
+    _vs_n=0
+    mirror_sitemaps "$1" > "$_vs_dir/index"
+    while IFS= read -r _vs_u; do
+        [ -n "$_vs_u" ] || continue
+        _vs_n=$(( _vs_n + 1 ))
+        printf '%s\t%s\n' "$_vs_u" "$_vs_dir/s$_vs_n.xml"
+    done < "$_vs_dir/index" > "$_vs_dir/jobs"
+    [ -s "$_vs_dir/jobs" ] || { rm -rf "$_vs_dir"; return 1; }
+    mirror_ua_fetch "$_vs_dir/jobs"
+    # Slugs are hyphenated, so "desolation of smaug" has to be matched as
+    # "desolation-of-smaug". Try the joined form first, then an ALL-words
+    # fallback with the common words dropped — an ANY-word fallback matches
+    # "the"/"season"/"2" and turns "kgf chapter 2" into Attack on Titan.
+    _vs_all="$(grep -hoE "<loc>https://$1/[a-z0-9][a-z0-9._-]*/</loc>" "$_vs_dir"/*.xml 2>/dev/null \
+        | sed 's|<loc>||; s|</loc>||' | sort -u)"
+    _vs_hits=""
+    # printf, not "$_vs_q | tr": an unquoted expansion at the head of a pipeline
+    # is a COMMAND, so the shell would try to run the query as a program
+    _vs_joined="$(printf '%s' "$_vs_q" | tr ' ' '-' | tr -cd 'a-z0-9-')"
+    if [ -n "$_vs_joined" ]; then
+        _vs_hits="$(printf '%s\n' "$_vs_all" | grep -i -- "$_vs_joined")"
+    fi
+    if [ -z "$_vs_hits" ]; then
+        _vs_pat="$(mirror_words_regex "$_vs_q")"
+        if [ -n "$_vs_pat" ]; then
+            _vs_hits="$(printf '%s\n' "$_vs_all" | grep -iE "$_vs_pat")"
+        fi
+    fi
+    rm -rf "$_vs_dir" 2>/dev/null
+    [ -n "$_vs_hits" ] || return 1
+    printf '%s\n' "$_vs_hits" | mirror_format
+}
+
+mirror_ua_fetch() { # jobs file, "url<TAB>outfile" lines
+    _vf_pids=""
+    _vf_n=0
+    while IFS='	' read -r _vf_url _vf_out; do
+        [ -n "$_vf_url" ] || continue
+        curl -sfL --max-time 25 -A "$vicine_ua" "$_vf_url" -o "$_vf_out" 2>/dev/null &
+        _vf_pids="$_vf_pids $!"
+        _vf_n=$(( _vf_n + 1 ))
+        [ "$_vf_n" -ge 8 ] && {
+            for _vf_p in $_vf_pids; do wait "$_vf_p" 2>/dev/null; done
+            _vf_pids=""; _vf_n=0
+        }
+    done < "$1"
+    for _vf_p in $_vf_pids; do wait "$_vf_p" 2>/dev/null; done
+}
+
+mirror_format() {
+    while IFS= read -r _vf_url; do
+        [ -n "$_vf_url" ] || continue
+        _vf_slug="${_vf_url%/}"; _vf_slug="${_vf_slug##*/}"
+        _vf_slug="${_vf_slug#download-}"
+        _vf_type="movie"
+        case "$_vf_slug" in
+            *season-*|*'-s0'[0-9]*) _vf_type="series" ;;
+        esac
+        _vf_title="$(printf '%s' "$_vf_slug" \
+            | sed 's|/| |g; s|_| |g; s|-| |g; s|\..*$||' \
+            | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' \
+            | awk '{
+                for (i = 1; i <= NF; i++) {
+                    w = tolower($i)
+                    if (w ~ /^(480p|720p|1080p|2160p|4k|3d|8bit|10bit|hevc|h264|h265|x264|x265|hd|webrip|webdl|web|bluray|brrip|remux|dual|multi|hindi|english|eng|org|orginal|original|dubbed|subs|sub|srt|ts|webrip|amzn|nf|hotstar|voe|10bit)$/) break
+                    out = out (out == "" ? "" : " ") w
+                }
+                print out
+            }' \
+            | sed 's/^ *//; s/ *$//')"
+        [ -n "$_vf_title" ] || _vf_title="$_vf_slug"
+        # title-case each word; awk because sed's \u/\b are GNU-only and this
+        # script also runs under dash
+        _vf_title="$(printf '%s' "$_vf_title" | awk '{
+            for (i = 1; i <= NF; i++)
+                $i = toupper(substr($i, 1, 1)) substr($i, 2)
+            print
+        }')"
+        printf '%s\t%s\t%s\n' "$_vf_url" "$_vf_title" "$_vf_type"
     done
 }
 
-pop_movie() { # id title
-    _id="$1"; _title="$2"
-    _u="$(pop_resolve movie "$_id")" || { warn "No stream found."; return 1; }
-    [ -z "$_u" ] && { warn "No stream found."; return 1; }
-    _pl="$(pop_m3u8 "$_u")" || { warn "No stream found."; return 1; }
-    if [ "$download_all_mode" = 1 ] || [ "$player_function" = "download" ]; then
-        _safe="$(sanitize "$_title")"
-        do_download "$_pl" "$_safe"
-        _pdl_rc=$?
-        [ "$_pdl_rc" -eq 0 ] && update_history "$_id" "$_title" movie 0 0
-        return "$_pdl_rc"
-    fi
-    info "Playing: $_title"
-    pop_play "$_pl" "$_title"
-    _rc=$?
-    update_history "$_id" "$_title" movie 0 0
-    [ "$exit_after_play" = 1 ] && exit "$_rc"
+# Origin ("https://host/") of a page URL — what these fetches send as Referer.
+# ${1%%/*} cuts at the FIRST slash and yields "https:" instead.
+mirror_ref() { _mr="${1#*//}"; printf 'https://%s/' "${_mr%%/*}"; }
+
+# title page -> the nexdrive.fit gateway links (one per quality/episode).
+# Every host uses the same gateway, so this is host-agnostic.
+mirror_links() { # page url -> absolute gateway URLs
+    _vl_page="$(curl -sfL --max-time 25 -A "$vicine_ua" \
+        -e "$(mirror_ref "$1")" "$1")" || return 1
+    [ -n "$_vl_page" ] || return 1
+    printf '%s' "$_vl_page" | grep -oE 'https://[a-z0-9.-]*nexdrive\.[a-z]+/[a-z0-9]+/' | sort -u
 }
 
-pop_search() {
-    _query="$1"
-    [ -z "$_query" ] && die "Missing search query"
-    _pop_found=0   # 1 once a title is chosen — callers stop the chain there
-    _enc=$(henc "$_query")
-    info "Searching (server-2): $_query"
-    if ! curl -sf --max-time 20 -A "$anime_agent" "https://popmovie.online/api/tmdb/search/multi?query=${_enc}" -o "$tmpfile"; then
-        warn "popmovie API unreachable."; return 1
+# gateway -> final media URL: nexdrive -> fastdl embed -> googleusercontent.
+# The embed path varies per page (/embed?download= vs /embed.php?download=),
+# hence the optional .php.
+mirror_resolve() { # gateway url -> direct media url
+    _vr_page="$(curl -sfL --max-time 25 -A "$vicine_ua" -e "$(mirror_ref "$2")" "$1")" || return 1
+    [ -n "$_vr_page" ] || return 1
+    _vr_emb="$(printf '%s' "$_vr_page" \
+        | grep -oE 'https://[a-z0-9.-]*fastdl\.[a-z]+/embed(\.php)?\?download=[A-Za-z0-9]+' | head -1)"
+    [ -n "$_vr_emb" ] || return 1
+    _vr_e="$(curl -sfL --max-time 25 -A "$vicine_ua" -e "$1/" "$_vr_emb")" || return 1
+    [ -n "$_vr_e" ] || return 1
+    # the embed wraps the real target in a dl.php?link=<url> href. Take that
+    # value specifically — the page also carries unrelated cache/campaign
+    # links, and "first http(s) that isn't a gateway" lands on one of those.
+    printf '%s' "$_vr_e" \
+        | grep -oE 'dl\.php\?link=https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' \
+        | head -1 \
+        | sed 's|^dl\.php?link=||'
+}
+
+cmd_mirrors() { # query
+    _vg_q="$1"
+    [ -z "$_vg_q" ] && die "Missing vega query"
+    _vg_list=""
+    # every mirror is searched and the results merged, so a title that only one
+    # of them carries is still reachable. Costs ~25 sitemaps and ~5 MB when
+    # the fallthrough gets this far, hence the progress line.
+    : > "$tmpfile3.vega"
+    # -z HOST narrows to one mirror; -z alone walks all of MIRROR_HOSTS
+    if [ -n "$mirror_host" ]; then
+        printf '%s\n' "$mirror_host" > "$tmpfile4.vega"
+    else
+        printf '%s\n' "$MIRROR_HOSTS" > "$tmpfile4.vega"
     fi
-    jq -c '[.results[] | {title: (.title // .name // "Untitled"), contentType: (if .media_type == "tv" then "series" elif .media_type == "movie" then "movie" else empty end), url_slug: (.id|tostring), date: (.release_date // .first_air_date // "")} | select(.contentType != "")]' "$tmpfile" > "$tmpfile.tmp" && mv "$tmpfile.tmp" "$tmpfile"
-    if ! jq -e 'length > 0' "$tmpfile" >/dev/null 2>&1; then
-        warn "No results found for: $_query"; return 1
+    while IFS= read -r _vg_h; do
+        [ -n "$_vg_h" ] || continue
+        info "Searching ($_vg_h): $_vg_q"
+        _vg_r="$(mirror_search "$_vg_h" "$_vg_q")" || _vg_r=""
+        [ -n "$_vg_r" ] || continue
+        # tag each hit with the host it came from: the page referer and the
+        # history key both need it
+        printf '%s\n' "$_vg_r" | while IFS='	' read -r _u _t _ty; do
+            [ -n "$_u" ] && printf '%s\t%s\t%s\t%s\n' "$_u" "$_t" "$_ty" "$_vg_h"
+        done >> "$tmpfile3.vega"
+    done < "$tmpfile4.vega"
+    [ -s "$tmpfile3.vega" ] || { rm -f "$tmpfile3.vega" "$tmpfile4.vega"; warn "No results on the mirror sites."; return 1; }
+    _vg_list="$(cat "$tmpfile3.vega")"
+    _vg_host="$(cat "$tmpfile4.vega")"
+
+    _vg_n=0
+    printf '%s\n' "$_vg_list" | while IFS='	' read -r _s _t _ty _th; do
+        _vg_n=$(( _vg_n + 1 ))
+        printf '%d  %s  [%s]  %s\n' "$_vg_n" "$_t" "$_ty" "$_th"
+    done > "$tmpfile3"
+    _vg_pick="$(menu "Select (mirrors): " < "$tmpfile3")" || true
+    [ -z "$_vg_pick" ] && return 0
+    _vg_row="$(printf '%s' "$_vg_list" | sed -n "$(printf '%s' "$_vg_pick" | awk '{print $1+0}')p")"
+    _vg_url_pg="$(printf '%s' "$_vg_row" | cut -f1)"
+    _vg_title="$(printf '%s' "$_vg_row" | cut -f2)"
+    _vg_type="$(printf '%s' "$_vg_row" | cut -f3)"
+    _vg_host="$(printf '%s' "$_vg_row" | cut -f4)"
+    [ -n "$_vg_url_pg" ] || return 1
+    _vg_links="$(mirror_links "$_vg_url_pg")" || { warn "No links."; return 1; }
+    [ -n "$_vg_links" ] || { warn "No links."; return 1; }
+
+    # every gateway button is labelled "Download Now" and only some of them
+    # carry a fastdl embed, so a source picker would be a menu of identical
+    # entries. Try them in order and take the first that resolves.
+    info "Resolving: $_vg_title"
+    _vg_url=""
+    printf '%s\n' "$_vg_links" > "$tmpfile3"
+    _vg_n=0
+    while IFS= read -r _vg_link; do
+        [ -n "$_vg_link" ] || continue
+        _vg_n=$(( _vg_n + 1 ))
+        [ "$_vg_n" -gt 6 ] && break
+        _vg_url="$(mirror_resolve "$_vg_link" "$_vg_url_pg")" || _vg_url=""
+        [ -n "$_vg_url" ] && break
+    done < "$tmpfile3"
+    [ -n "$_vg_url" ] || { warn "Could not resolve a stream."; return 1; }
+    # stable history key: host + slug, so the same title on two mirrors does
+    # not collide and a re-pick overwrites its own row
+    _vg_key="${_vg_host}-$(basename "$_vg_url_pg")"
+    _vg_safe="$(sanitize "$_vg_title")"
+    if [ "$player_function" = "download" ] || [ "$download_all_mode" = 1 ]; then
+        do_download "$_vg_url" "$_vg_safe"
+        _vg_rc=$?
+        [ "$_vg_rc" -eq 0 ] && update_history "vega-$_vg_key" "$_vg_title" "$_vg_type" 0 0
+        return "$_vg_rc"
     fi
-    select_item
-    _pop_rc=$?
-    if [ "$_pop_rc" -ne 0 ]; then
-        [ "$_pop_rc" = 2 ] && return 0
-        warn "No results found for: $_query"; return 1
-    fi
-    _pop_found=1
-    _p_title="$(jq -r '.title // ""' "$tmpfile2")"
-    _p_id="$(jq -r '.url_slug // ""' "$tmpfile2")"
-    _p_type="$(jq -r '.contentType // "movie"' "$tmpfile2")"
-    [ -z "$_p_id" ] && return 1
-    if [ "$info_only" = 1 ] && [ "$download_all_mode" = 0 ]; then
-        printf "  %s\n" "$_p_title"
-        return 0
-    fi
-    if [ "$_p_type" = "series" ]; then pop_series "$_p_id" "$_p_title"; else pop_movie "$_p_id" "$_p_title"; fi
+    info "Playing: $_vg_title"
+    play_url "$_vg_url" "$_vg_title"
+    _rc=$?
+    [ "$_rc" -eq 0 ] && update_history "vega-$_vg_key" "$_vg_title" "$_vg_type" 0 0
+    return "$_rc"
 }
 
 # ─── Self-update ────────────────────────────────────────────────────────────
 
 update_script() {
     _repo="${VICINE_UPDATE_URL:-https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/vicine}"
+    # Whatever we are about to execute has to come from the project over TLS.
+    # VICINE_UPDATE_URL is otherwise an unauthenticated override, and with only
+    # the sh -n check below a plaintext URL means arbitrary code execution.
+    case "$_repo" in
+        https://raw.githubusercontent.com/spaciousejar/vicine-cli/*) ;;
+        *) die "Refusing update source outside raw.githubusercontent.com: $_repo" ;;
+    esac
     info "Checking for updates..."
     _new="$(curl -sfL "$_repo")" || die "Update failed: cannot fetch $_repo"
     _new_ver="$(printf "%s" "$_new" | sed -n 's/^version_number="\([^"]*\)"/\1/p')"
@@ -1943,8 +1833,9 @@ update_script() {
     printf "%s\n" "$_new" | sh -n >/dev/null 2>&1 || die "Fetched script failed syntax check — not updating."
     # atomic replace: write a temp next to the target, then mv. This both
     # surfaces write failures and avoids the running shell reading a half-
-    # written file (dash reads scripts in chunks).
-    _tmp="$0.tmp.$$"
+    # written file (dash reads scripts in chunks). mktemp, not "$0.tmp.$$" —
+    # a predictable name is a symlink-clobber target next to the install.
+    _tmp=$(mktemp "$0.XXXXXX") || die "Update failed: cannot create a temp file next to $0"
     if printf "%s\n" "$_new" > "$_tmp" && chmod 755 "$_tmp" && mv -f "$_tmp" "$0"; then
         ok "Updated: $version_number -> $_new_ver"
         exit 0
@@ -1976,11 +1867,21 @@ uninstall_self() {
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 
+# Sourced as a library (VICINE_LIB=1 vicine) by the test suites: defines every
+# function and returns here, so tests can call the real implementations
+# instead of extracting them with sed. Everything above is declarations.
+[ -n "${VICINE_LIB:-}" ] && return 0
+
+# Before anything is created. Without it the watch history landed 0644 in a
+# 0755 dir, and every derived /tmp path ("$histfile.tmp", "${tmpfile}.tmp",
+# "${tmpfile3}.pre") was a world-readable
+# truncating open on a world-visible name.
+umask 077
+
 # Config
-# Provider tags used in messages: server-1 = hicine, server-2 = popmovie
-# (TMDB/vidsrc backup), server-3 = hianime (anime)
+# Provider order: hicine (this API) is always tried first; hianime (anime) and
+# then the mirror sites are the fallbacks, via provider_chain().
 API="https://api.hicine.sbs"
-provider="${VICINE_PROVIDER:-hicine}"
 # HiAnime backend (hianimes.se is a page-only mirror: its /search and /api/*
 # routes 307 to /home, so the API calls below must go to hianime.at).
 anime_base="https://hianime.at"
@@ -1989,13 +1890,10 @@ anime_episodes_api="${anime_base}/api/theme/episode/list/%s"
 anime_servers_api="${anime_base}/api/theme/episode/servers?episodeId=%s"
 # playback embeds come from zokoanime.video/…; hls.1embed.buzz CDN is referer-gated
 anime_embed_ref="https://zokoanime.video/"
-anime_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+vicine_ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 anime_mode="${VICINE_ANIME_MODE:-dub}"
 anime_ep_maps=""
 anime_ep_list=""
-# player_extra: extra player flags (popmovie sets an mpv HLS whitelist
-# so the local stamped playlist may fetch https segments)
-player_extra=""
 download_dir="${VICINE_DOWNLOAD_DIR:-$HOME/Movies}"
 dl_jobs="${VICINE_DL_JOBS:-1}"
 no_detach="${VICINE_NO_DETACH:-0}"
@@ -2021,14 +1919,10 @@ tmpfile=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile2=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile3=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile4=$(mktemp /tmp/VICINE.XXXXXX)
-# BSD/macOS mktemp needs the X-run as the trailing template suffix, so
-# create then rename instead of /tmp/VICINE.XXXXXX.m3u8
-tmpfile5=$(mktemp /tmp/VICINE.XXXXXX)
-mv -f "$tmpfile5" "${tmpfile5}.m3u8"
-tmpfile5="${tmpfile5}.m3u8"
 trap cleanup EXIT
 trap on_sigint INT
-trap cleanup HUP TERM
+trap on_sighup HUP
+trap on_sigterm TERM
 
 # Curl
 curl_exe="curl"
@@ -2055,10 +1949,25 @@ fi
 # Parse args
 search_mode=""
 query=""
+mirror_host=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -s|--search)      search_mode="search" ;;
         -A|--anime)       search_mode="anime" ;;
+        -z|--mirrors)     search_mode="mirrors"
+            # optional host: "vicine -z" searches the mirrors, "vicine -z
+            # vegamovies" names one. Accepts the full host or its first label.
+            # Anything unrecognised stays query text, so "vicine -z dune"
+            # still searches for "dune".
+            case "$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')" in
+                "") : ;;
+                *) _zh="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+                   _zm="$(printf '%s\n' "$MIRROR_HOSTS" | grep -iE "^${_zh}\.?" | head -1)"
+                   if [ -n "$_zm" ]; then
+                       shift; mirror_host="$_zm"
+                   fi ;;
+            esac
+            ;;
         --dub)            anime_mode="dub" ;;
         --sub)            anime_mode="sub" ;;
         -t|--trending)    search_mode="trending" ;;
@@ -2087,8 +1996,10 @@ while [ $# -gt 0 ]; do
         --limit)          shift; [ -n "$1" ] || die "Missing value for --limit"; browse_limit="$1" ;;
         help)             help_info ;;
         version)          version_info ;;
-        trending|recent|browse|search|info|anime|zxc)
-            [ -z "$search_mode" ] && search_mode="$1" || query="$(printf '%s' "$query $1" | sed 's|^ ||')"
+        trending|recent|browse|search|info|anime|mirrors)
+            # a bare command word is always a command, never query text —
+            # otherwise "-i anime naruto" searched for the literal words
+            search_mode="$1"
             ;;
         *)                query="$(printf '%s' "$query $1" | sed 's|^ ||')" ;;
     esac
@@ -2134,7 +2045,7 @@ esac
 
 # -D wins over -i regardless of flag order, except for -D -A: anime
 # download-all is handled inside cmd_anime, so keep search_mode="anime"
-[ "$download_all_mode" = 1 ] && case "$search_mode" in ""|search) search_mode="download_all" ;; esac
+[ "$download_all_mode" = 1 ] && case "$search_mode" in ""|search|info) search_mode="download_all" ;; esac
 
 # Normalize quality: lowercase (480P → 480p...) and 4K/4k → 2160p so -q
 # matches variants everywhere; the anime picker's grep is case-sensitive
@@ -2157,12 +2068,12 @@ case "$search_mode" in
         done
         cmd_anime "$query"
         ;;
-    zxc)
+    mirrors)
         while [ -z "$query" ]; do
             printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}"
-            read -r query || die "No zxc search query provided."
+            read -r query || die "No mirror search query provided."
         done
-        cmd_zxc "$query"
+        cmd_mirrors "$query"
         ;;
     trending)  cmd_trending "$query" ;;
     recent)    cmd_recent "$query" ;;
@@ -2187,15 +2098,12 @@ case "$search_mode" in
     download_all)
         [ -z "$query" ] && die "Missing query"
         cmd_search "$query"
-        # popmovie handles -D inside pop_search; don't fall through to
-        # hicine's download-all on an empty/selected item. tmpfile2 exists
-        # from startup (mktemp), so an empty/aborted search must be detected
-        # by content (-s), not existence — otherwise the flow below runs on a
-        # blank item and dies with "integer expected" / "No downloadable links".
-        [ "$provider" = "popmovie" ] && exit 0
-        # a fallback provider (pop_search/anime) finished the download-all
+        # a fallback provider (anime/vega) finished the download-all
         # itself; its selection lives in tmpfile2 and must not re-enter the
-        # hicine download flow below
+        # hicine download flow below. tmpfile2 exists from startup (mktemp),
+        # so an empty/aborted search must be detected by content (-s), not
+        # existence — otherwise the flow below runs on a blank item and dies
+        # with "integer expected" / "No downloadable links".
         [ "$_backup_used" = "1" ] && exit 0
         [ -s "$tmpfile2" ] || exit 0
         mkdir -p "$download_dir"
@@ -2293,6 +2201,7 @@ case "$search_mode" in
                     _waitpids=""
                     _line_no=1
                     _prefile="${tmpfile3}.pre"
+                    _prepid=""
                     : > "$_prefile"
                     while IFS='	' read -r _num _url _qual _size; do
                         _enum=$(printf '%02d' "$_num")
@@ -2331,12 +2240,21 @@ case "$search_mode" in
                             if [ "$_line_no" -eq 1 ]; then
                                 _r="$(resolve_stream_url "$_url")"
                             else
+                                # the prefetch is still resolving unless the
+                                # previous download outlasted it; reaping it
+                                # first is what stops a fast do_download (an
+                                # "Already exists" hit, a 401/403 probe failure,
+                                # a rejected error page) from reading an empty
+                                # file and cascading "unavailable" for the
+                                # rest of the season
+                                [ -n "$_prepid" ] && { wait "$_prepid"; _prepid=""; }
                                 _r="$(cat "$_prefile" 2>/dev/null)"
                             fi
                             _nl="$(sed -n "$((_line_no + 1))p" "$tmpfile3")"
                             if [ -n "$_nl" ]; then
                                 _nu="$(printf '%s' "$_nl" | cut -f2)"
                                 ( _pr="$(resolve_stream_url "$_nu")"; printf '%s\n' "$_pr" > "$_prefile" ) &
+                                _prepid=$!
                             fi
                             _line_no=$(( _line_no + 1 ))
                             if [ -z "$_r" ]; then
@@ -2363,6 +2281,9 @@ case "$search_mode" in
 
             # one history line per downloaded title (-c lists it; dedup by
             # slug == this line). Last processed episode across seasons.
+            # -D sets info_only, so prompt_action (the only other place _slug
+            # is assigned) never runs — read it here or update_history bails.
+            _slug="$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)"
             [ -n "${_hist_ep:-}" ] && update_history "$_slug" "$_title" series "${_hist_si:-0}" "$_hist_ep"
 
             # Anime-type hicine title (single season) with episodes still
@@ -2375,7 +2296,9 @@ case "$search_mode" in
                 _missing=""
                 while IFS='	' read -r _num _url _qual _size; do
                     _enum=$(printf '%02d' "$_num")
-                    [ -s "${download_dir}/${_safe}/season-1/S1E${_enum}.mp4" ] ||
+                    # dl_find, not a .mp4 test: a source that can't mux into MP4
+                    # was saved as .mkv, and re-fetching it skews _total
+                    dl_find "${download_dir}/${_safe}/season-1/S1E${_enum}" >/dev/null ||
                         _missing="$_missing $_num"
                 done < "$tmpfile3"
                 if [ -n "$_missing" ]; then
@@ -2414,9 +2337,7 @@ case "$search_mode" in
         _links=$(jq -r '.links // empty' "$tmpfile2")
         if [ -z "$_links" ]; then
             # item-level dead entry: run the same backup chain as a search miss
-            warn "No links on server-1 — trying server-2."
-            # original query, not the hicine stub title (see prompt_action)
-            pop_search "${query:-$_title}"
+            warn "No links on server-1 — nothing else to try."
             exit 0
         fi
         _parsed="$(parse_links "$_links")"
@@ -2439,9 +2360,7 @@ case "$search_mode" in
         _mrc=$?
         [ "$_mrc" -ge 130 ] && exit "$_mrc"
         if [ "$_mrc" -ne 0 ]; then
-            # hicine movie link dead — popmovie (TMDB/vidsrc) may still have it
-            warn "server-1 download failed — trying server-2."
-            pop_search "$_title"
+            warn "server-1 download failed."
         fi
         ;;
 esac

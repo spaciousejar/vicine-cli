@@ -4,19 +4,36 @@ For usage and install options see the [README](README.md); for contribution
 rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
 works.
 
-vicine scrapes three backends: **hicine** (movies/series), **popmovie**
-(TMDB/vidsrc backup), and **hianime** (anime). All are plain HTTP APIs
-wrapped in POSIX shell — no build step, no frameworks.
+vicine scrapes several backends: **hicine** (movies/series), **hianime**
+(anime) and **vegamovies.gallery** (last resort). All are plain
+HTTP calls wrapped in POSIX shell — no build step, no frameworks.
 
 ## Provider fallback (server-1 → server-2 → server-3)
 
-Search starts on server-1 (hicine). If it returns nothing, the API is
-unreachable, or the user cancels → **same status codes matter**: `select_item`
-returns `1` for "no results", `2` for "user cancelled" (cancelling must NOT
-trigger the chain). On a genuine miss, `pop_search` (server-2) runs, and
-only if that also fails does `cmd_anime` (server-3) run. `-D` downloads
-failed hicine movies are retried through server-2. `VICINE_PROVIDER=popmovie`
-forces server-2 only; `-A` forces server-3 only.
+Search starts on server-1 (hicine). If it returns nothing or the API is
+unreachable → **status codes matter**: `select_item` returns `1` for
+"no results", `2` for "user cancelled" (cancelling must NOT trigger the
+chain). On a genuine miss `provider_chain` runs `cmd_mirrors` → `cmd_anime`,
+each tried until one returns 0 — film sources before the anime one, so a
+general query does not land on an anime-only catalogue first. `-A` forces anime only, `-z` forces the
+mirrors. `provider_chain` is the only place that owns this policy.
+
+`prompt_action` splits into two: `play_season_zip` handles a season that
+arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
+"nothing to play" — see `tests/season_zip.sh`, which stubs the network.
+
+`cmd_mirrors` searches every host in `MIRROR_HOSTS` and merges the results into
+one list, each row tagged with its host (field 4) — the page referer and the
+history key both need it. Each host's search is a sitemap pull
+(`mirror_sitemaps` parses the index; the post-sitemap count and naming differ
+per host, 3 to 34), fetched 8-way parallel by `mirror_ua_fetch`, then grepped
+for the slug. All four together is ~15 s and ~14 MB, paid only after hicine
+and hianime have both missed.
+
+`-z` skips the first two providers and goes straight to the mirrors; `-z HOST`
+restricts it to one. The host is matched against `MIRROR_HOSTS` by full name or
+first label, and an unmatched word stays part of the query rather than erroring —
+so a typo degrades to a plain mirror search rather than a confusing error.
 
 ## Movie/series flow (hicine)
 
@@ -62,14 +79,6 @@ forces server-2 only; `-A` forces server-3 only.
    the list (`sed -n "${row}p"`) so non-contiguous numbering (0-specials,
    S2@13) plays the right episode (`tests/anime_picker.sh`).
 
-## Backup provider flow (popmovie)
-
-`pop_search` → TMDB search via `popmovie.online/api/tmdb/…` (movies and
-tv). `pop_resolve` asks `data.vidsrc.sh/api.php` for stream URLs; encrypted
-payloads decrypt via a node+wasm step. `pop_m3u8` rewrites the playlist to
-absolute, token-stamped segment/key URIs (the stamp is in awk; guarded by
-`tests/pop_m3u8.sh` — keep the `#EXT-X-KEY` rewrite single-pass, a
-`while(match())` there loops forever once the closing quote is restored).
 
 ## Debugging
 
@@ -89,11 +98,14 @@ absolute, token-stamped segment/key URIs (the stamp is in awk; guarded by
 
 ## Architecture notes
 
-- State lives in five `mktemp` files: `tmpfile` = search JSON,
-  `tmpfile2` = selected item, `tmpfile3` = menu lists, `tmpfile4` = player
-  log, `tmpfile5` = popmovie's rewritten `.m3u8` playlist (created via
-  `mktemp` + rename so BSD/macOS accepts it). An EXIT trap cleans them and
-  preserves the exit code; Ctrl-C is 130.
+- `VICINE_LIB=1 vicine` defines every function and returns before the `Main`
+  section, so a test can `. ./vicine` and call the real implementations.
+  This is how the suites work — they used to `eval` functions sed-extracted
+  from the file, which could silently keep passing against a stale copy.
+- State lives in `mktemp` files: `tmpfile` = search JSON, `tmpfile2` =
+  selected item, `tmpfile3` = menu lists, `tmpfile4` = player log.
+  An EXIT trap cleans them and preserves the exit code; Ctrl-C is 130,
+  HUP/TERM are 129/143.
 - Exit codes matter: `die` → 1, interrupts → 130, player exit codes pass
   through with `--exit-after-play`.
 - Quality is normalized lowercase and `4k` → `2160p` before any matching.
@@ -103,7 +115,7 @@ absolute, token-stamped segment/key URIs (the stamp is in awk; guarded by
   chain (dead CDN bucket); `_stage_ok` rejects HTML/XML/JSON and plain-text
   error bodies; an existing non-empty file short-circuits ("Already
   exists").
-- Parallel `-D` loops (`VICINE_DL_JOBS`, default 2) resolve + download in
+- Parallel `-D` loops (`VICINE_DL_JOBS`, default 1 = serial) resolve + download in
   subshell workers, awaiting each job by PID — dash's bare `wait` returns
   the last job's status, bash/POSIX return 0, so the pids are waited
   individually to keep Ctrl-C working under every shell.

@@ -6,8 +6,8 @@
 # sed/grep/sort/printf only, no script globals), so the test can never
 # silently test a stale copy.
 
-SCRIPT="$(dirname "$0")/../vicine"
-eval "$(sed -n '/^anime_variants() {/,/^}/p' "$SCRIPT")"
+VICINE_LIB=1 . "$(dirname "$0")/../vicine"
+command -v anime_variants >/dev/null 2>&1 || { echo "anime_variants missing" >&2; exit 1; }
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }
 

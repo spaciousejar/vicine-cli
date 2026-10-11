@@ -3,9 +3,10 @@
 # Both are extracted from the real script at runtime.
 # Usage: sh tests/movie_links.sh
 
-SCRIPT="$(dirname "$0")/../vicine"
+# source the real script (VICINE_LIB) rather than sed-ing functions out of it
+VICINE_LIB=1 . "$(dirname "$0")/../vicine"
 for fn in movie_best_url movie_quality_url; do
-    eval "$(sed -n "/^${fn}() {/,/^}/p" "$SCRIPT")" || { echo "could not extract $fn" >&2; exit 1; }
+    command -v "$fn" >/dev/null 2>&1 || { echo "$fn missing from vicine" >&2; exit 1; }
 done
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }

@@ -7,6 +7,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Remote provider text can no longer reach the player or downloader as a bare
+  positional argument. A `--`-prefixed "URL" from the API was parsed as an
+  option — `mpv --script=` executes Lua, `yt-dlp --exec=` runs a shell command
+  — and the dead-link probe did not stop it because it only runs for http(s)
+  URLs. Stream URLs are now checked before use, and only an http(s) URL or the
+  script's own local manifest is accepted (#40).
+- A hostile title can no longer escape `download_dir` by one path segment.
+  `sanitize` strips `/` but keeps `.`, so a title of `..` survived it and the
+  unsanitised `dirname` was then `mkdir -p`'d (#43).
+- `vicine -U` refuses an update source outside
+  `raw.githubusercontent.com/spaciousejar/vicine-cli`, so `VICINE_UPDATE_URL`
+  can no longer be used to install arbitrary code, and stages the payload
+  through `mktemp` instead of a predictable `$0.tmp.$$` (#44).
+- `umask 077` before anything is created: watch history was `0644` in a `0755`
+  directory, and every derived `/tmp` path was a world-readable truncating
+  open on a world-visible name (#46).
+- A title containing a newline or tab can no longer forge a history row whose
+  season field reaches a jq program; the season read back from history is
+  digits-checked (#50).
+- History dedup compares slugs as strings. `awk`'s numeric compare made slug
+  `005` delete the row for `5` (#48).
+- `.gitignore` covers the zxc session cookie jar, `.freebuff` and
+  `.playwright-mcp`; `git add -A` was publishing a `0644` cookie jar holding
+  `cf_clearance` (#47).
+
+### Fixed
+
+- `-e N--1` (episode N to the last) dropped episode N and could pull in
+  episodes *below* it. The start bound was parsed with `%` instead of `%%`, so
+  `10--1` yielded `10-`, which awk compares as a string — `"2" > "10-"` is
+  true, so episode 2 came back in the range. An existing test asserted the
+  broken answer (`-e 4--1` → `5`) and so passed by accident (#54-era sweep).
+
+- `prompt_action` (234 lines) now delegates the whole-season-archive path to
+  a `play_season_zip` function with a 0/1 "handled / nothing to play"
+  contract, taking it to 166 lines. The extracted behaviour is pinned by a new
+  `tests/season_zip.sh`, including the quality-first candidate ordering and
+  the stale-URL fallback that ordering exists for.
+
+- The suites now source the real script (`VICINE_LIB=1 vicine`) instead of
+  `eval`-ing functions sed-extracted from it, and a new `series_select.sh`
+  covers the series/episode narrowing that `prompt_action` — the largest
+  function in the file — had never exercised.
+
+- `-D` no longer reports the rest of a season "unavailable". The next
+  episode's resolve was backgrounded with its PID discarded, so a fast
+  `do_download` — an "Already exists" hit, a 401/403 probe failure, a rejected
+  error page — read an empty prefetch and cascaded for the whole season while
+  still exiting 0. This hit re-runs of `-D` after an interrupted download,
+  the gap-fill case the docs advertise (#41).
+- `-D` on a series now records watch history. `_slug` was only ever assigned
+  in `prompt_action`, which `-D` can never reach, so `update_history` bailed
+  and the title never appeared under `-c` (#42).
+- `change_season` and `change_quality` use the last episode number rather than
+  the episode count for `_ep_total`, and `change_season` starts at the season's
+  first episode instead of hardcoding 1 — both silently broke absolute-numbered
+  or gapped seasons. Unfixed half of #28 (#49).
+- `stat -c%s` replaced with `wc -c` in the yt-dlp `.part` recovery. BSD/macOS
+  `stat` has no `-c`, so the test errored, the recovery never ran, and the
+  finished file was deleted (#45).
+- A bare subcommand word is always a command, so `-i zxc batman` uses the zxc
+  provider instead of searching for the literal string; `-i -D` now downloads
+  as the flag-order comment claimed (#51).
+- `--exit-after-play` after a whole-season ZIP play returns the player's exit
+  code. `$?` referred to the `[` test, so it always exited 0 (SC2319, #39).
+- ShellCheck `warning`+ is enforced in CI, plus suites for the new download
+  guards and the `-D` prefetch scheduling (#39, #53).
+
+### Changed
+
+- Watch history is only recorded when the player actually succeeded (anime,
+  popmovie and zxc paths; the hicine movie flow already did).
+- Episode multi-select uses min/max of the picks. `fzf -m` prints in selection
+  order, so picking ep 5 then ep 2 dropped the range and played only ep 5.
+- The anime gap-fill scan accepts any completed container, not just `.mp4`, so
+  a `.mkv` completion is no longer re-fetched on every `-D` run.
+- `HUP` and `TERM` now exit 129 and 143 instead of 0.
+- A collapsed dead branch in `cmd_search`'s server-1 fallback.
+
+### Fixed
+
+- The zxc provider wrote its DASH manifest into a `*.m3u8` temp file. mpv
+  picks its demuxer from the extension, so the MPD was parsed as an HLS
+  playlist and every `<Period>`/`<AdaptationSet>` tag was tried as a URL. It
+  now gets its own `.mpd` temp file (#54).
+- popmovie: a rejected per-host token no longer becomes a bogus local playlist.
+  The stream JWT is bound to the caller's IPv6 /64, which rotates, so a token
+  minted seconds earlier can 401 — and the 9-byte `no token` body passed the
+  non-empty check and was handed to yt-dlp as the playlist ("Response data has
+  no m3u header"). Playback now requires a real `#EXTM3U` body and re-mints the
+  token once before giving up (Bangalore Days, #36).
+- popmovie: detached playback no longer races the cleanup trap. `pop_play`
+  backgrounded yt-dlp against `$tmpfile5` and returned, so the script exited and
+  the `EXIT` trap deleted the playlist before the detached job opened it —
+  yt-dlp died with ENOENT and mpv exited on an empty pipe. The detached job now
+  gets its own copy and removes it when finished. The player, title and path
+  are passed to `bash -c` as positional args rather than interpolated (#37).
+
+### Added
+
+- `-z` / `--mirrors` goes straight to the mirrors; `-z HOST` narrows to one.
+- Mirror fallbacks `vegamovies.gallery` and `rogmovies.best` — same operator
+  as two sibling sites also tried (`gokuhd.com`, `xprimehub.pics`, both dropped,
+  see Removed), same `nexdrive.fit` → `fastdl.zip/embed` → googleusercontent
+  gateway chain, and the same dead client-side search (`?s=` returns 200 with
+  no results in the HTML). Discovery therefore goes through the sitemap index,
+  which is parsed rather than counted because the post-sitemap count and
+  naming differ per host and the first is sometimes `post-sitemap.xml` rather
+  than `post-sitemap1.xml`. ~12 s and ~5 MB per fallthrough, paid only after
+  hicine has missed.
+
+- Fallback order is now hicine → the film mirrors → hianime, so a general
+  query exhausts the film catalogues before reaching the anime-only one.
+  `-A` still goes straight to anime.
+
+  `-z` / `--mirrors` jumps straight to the mirrors, skipping hicine and
+  hianime. `-z HOST` narrows to one — the full host or its first label, so
+  `-z gokuhd` and `-z gokuhd.com` both work. An unrecognised word is left as
+  query text, so `vicine -z dune` still searches the mirrors for "dune". Gateways
+  vary — only some carry a fastdl embed, and the embed path is `/embed` or
+  `/embed.php` depending on the page — so each is tried until one resolves.
+
+### Removed
+
+- `gokuhd.com` from the mirror list: measured against 8 titles hicine lacks it
+  covered none, and it skipped mainstream titles the other mirrors carry.
+  `rogmovies.best` was dropped at the same time and later restored — it is the
+  only mirror that covered any of those gaps (`kantara chapter 1`), though it is
+  the slowest of the set and its sampled results were the least reliable
+  (2 of 3 playable).
+- `xprimehub.pics` from the mirror list. It is an adult site ("18+ Indian OTT
+  Web Series & Adult Movies"), and its titles would surface in fallback
+  results for anyone whose search fell through.
+- The popmovie provider (server-2). Its TMDB/vidsrc chain is gone along with
+  `VICINE_PROVIDER=popmovie` and the dead `$tmpfile5` playlist temp. The
+  fallback chain is now server-1 (hicine) → hianime → zxc → vegamovies, and
+  the `-D` retry of a failed hicine movie download is gone with it.
+
+### Removed
+
+- The zxc (zxcstream/vidstuck) provider, the `zxc` subcommand, and the
+  `$tmpfile6` DASH manifest temp. The fallback chain is now
+  server-1 (hicine) → hianime → vegamovies.
+
 ## [1.5.2] - 2026-09-28
 
 ### Fixed
