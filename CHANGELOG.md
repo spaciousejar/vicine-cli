@@ -69,9 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stat -c%s` replaced with `wc -c` in the yt-dlp `.part` recovery. BSD/macOS
   `stat` has no `-c`, so the test errored, the recovery never ran, and the
   finished file was deleted (#45).
-- A bare subcommand word is always a command, so `-i zxc batman` uses the zxc
-  provider instead of searching for the literal string; `-i -D` now downloads
-  as the flag-order comment claimed (#51).
+- A bare subcommand word is always a command, so `-i anime naruto` uses the
+  anime provider instead of searching for the literal words; `-i -D` now
+  downloads as the flag-order comment claimed (#51).
 - `--exit-after-play` after a whole-season ZIP play returns the player's exit
   code. `$?` referred to the `[` test, so it always exited 0 (SC2319, #39).
 - ShellCheck `warning`+ is enforced in CI, plus suites for the new download
@@ -79,8 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Watch history is only recorded when the player actually succeeded (anime,
-  popmovie and zxc paths; the hicine movie flow already did).
+- Watch history is only recorded when the player actually succeeded (the anime
+  and mirror paths; the hicine movie flow already did).
 - Episode multi-select uses min/max of the picks. `fzf -m` prints in selection
   order, so picking ep 5 then ep 2 dropped the range and played only ep 5.
 - The anime gap-fill scan accepts any completed container, not just `.mp4`, so
@@ -88,70 +88,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HUP` and `TERM` now exit 129 and 143 instead of 0.
 - A collapsed dead branch in `cmd_search`'s server-1 fallback.
 
-### Fixed
-
-- The zxc provider wrote its DASH manifest into a `*.m3u8` temp file. mpv
-  picks its demuxer from the extension, so the MPD was parsed as an HLS
-  playlist and every `<Period>`/`<AdaptationSet>` tag was tried as a URL. It
-  now gets its own `.mpd` temp file (#54).
-- popmovie: a rejected per-host token no longer becomes a bogus local playlist.
-  The stream JWT is bound to the caller's IPv6 /64, which rotates, so a token
-  minted seconds earlier can 401 — and the 9-byte `no token` body passed the
-  non-empty check and was handed to yt-dlp as the playlist ("Response data has
-  no m3u header"). Playback now requires a real `#EXTM3U` body and re-mints the
-  token once before giving up (Bangalore Days, #36).
-- popmovie: detached playback no longer races the cleanup trap. `pop_play`
-  backgrounded yt-dlp against `$tmpfile5` and returned, so the script exited and
-  the `EXIT` trap deleted the playlist before the detached job opened it —
-  yt-dlp died with ENOENT and mpv exited on an empty pipe. The detached job now
-  gets its own copy and removes it when finished. The player, title and path
-  are passed to `bash -c` as positional args rather than interpolated (#37).
-
 ### Added
 
-- `-z` / `--mirrors` goes straight to the mirrors; `-z HOST` narrows to one.
-- Mirror fallbacks `vegamovies.gallery` and `rogmovies.best` — same operator
-  as two sibling sites also tried (`gokuhd.com`, `xprimehub.pics`, both dropped,
-  see Removed), same `nexdrive.fit` → `fastdl.zip/embed` → googleusercontent
-  gateway chain, and the same dead client-side search (`?s=` returns 200 with
-  no results in the HTML). Discovery therefore goes through the sitemap index,
-  which is parsed rather than counted because the post-sitemap count and
-  naming differ per host and the first is sometimes `post-sitemap.xml` rather
-  than `post-sitemap1.xml`. ~12 s and ~5 MB per fallthrough, paid only after
-  hicine has missed.
-
+- `-z` / `--mirrors` goes straight to the film mirrors, skipping hicine and
+  hianime; `-z HOST` narrows to one — the full host or its first label, so
+  `-z vegamovies` and `-z vegamovies.gallery` both work. An unrecognised word
+  is left as query text, so `vicine -z dune` still searches the mirrors for
+  "dune".
+- Mirror fallbacks `vegamovies.gallery` and `rogmovies.best` — same operator,
+  same `nexdrive.fit` → `fastdl.zip/embed` → googleusercontent gateway chain,
+  and the same dead client-side search (`?s=` returns 200 with no results in
+  the HTML). Two sibling sites were measured and dropped: `gokuhd.com`
+  covered none of 8 sampled titles hicine lacks, and `xprimehub.pics` is an
+  adult site that would otherwise surface in anyone's fallback results.
+  Discovery goes through the sitemap index, which is parsed rather than counted
+  because the post-sitemap count and naming differ per host and the first is
+  sometimes `post-sitemap.xml` rather than `post-sitemap1.xml`. Both hosts
+  together are ~25 sitemap fetches and ~5 MB, paid only after hicine has
+  missed. Gateways vary — only some carry a fastdl embed, and the embed path
+  is `/embed` or `/embed.php` depending on the page — so each is tried until
+  one resolves.
 - Fallback order is now hicine → the film mirrors → hianime, so a general
-  query exhausts the film catalogues before reaching the anime-only one.
-  `-A` still goes straight to anime.
-
-  `-z` / `--mirrors` jumps straight to the mirrors, skipping hicine and
-  hianime. `-z HOST` narrows to one — the full host or its first label, so
-  `-z gokuhd` and `-z gokuhd.com` both work. An unrecognised word is left as
-  query text, so `vicine -z dune` still searches the mirrors for "dune". Gateways
-  vary — only some carry a fastdl embed, and the embed path is `/embed` or
-  `/embed.php` depending on the page — so each is tried until one resolves.
+  query exhausts the film catalogues before reaching the anime-only one. `-A`
+  still goes straight to anime.
 
 ### Removed
 
-- `gokuhd.com` from the mirror list: measured against 8 titles hicine lacks it
-  covered none, and it skipped mainstream titles the other mirrors carry.
-  `rogmovies.best` was dropped at the same time and later restored — it is the
-  only mirror that covered any of those gaps (`kantara chapter 1`), though it is
-  the slowest of the set and its sampled results were the least reliable
-  (2 of 3 playable).
-- `xprimehub.pics` from the mirror list. It is an adult site ("18+ Indian OTT
-  Web Series & Adult Movies"), and its titles would surface in fallback
-  results for anyone whose search fell through.
 - The popmovie provider (server-2). Its TMDB/vidsrc chain is gone along with
-  `VICINE_PROVIDER=popmovie` and the dead `$tmpfile5` playlist temp. The
-  fallback chain is now server-1 (hicine) → hianime → zxc → vegamovies, and
-  the `-D` retry of a failed hicine movie download is gone with it.
-
-### Removed
-
-- The zxc (zxcstream/vidstuck) provider, the `zxc` subcommand, and the
-  `$tmpfile6` DASH manifest temp. The fallback chain is now
-  server-1 (hicine) → hianime → vegamovies.
+  `VICINE_PROVIDER=popmovie` and the dead `$tmpfile5` playlist temp. The `-D`
+  retry of a failed hicine movie download goes with it; the fallback chain is
+  now hicine → the film mirrors → hianime.
+- The zxc (zxcstream/vidstuck) provider, its `zxc` subcommand, and the
+  `$tmpfile6` DASH manifest temp.
 
 ## [1.5.2] - 2026-09-28
 

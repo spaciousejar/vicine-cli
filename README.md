@@ -37,7 +37,6 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 > MegaPlay-based servers, which can't be resolved by the script — those show
 > "No sources found".
 
-
 ## Installation
 
 ### One-liner installer

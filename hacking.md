@@ -4,19 +4,20 @@ For usage and install options see the [README](README.md); for contribution
 rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
 works.
 
-vicine scrapes several backends: **hicine** (movies/series), **hianime**
-(anime) and **vegamovies.gallery** (last resort). All are plain
-HTTP calls wrapped in POSIX shell — no build step, no frameworks.
+vicine scrapes three backends: **hicine** (movies/series), the **film mirrors**
+(`vegamovies.gallery`, then `rogmovies.best`) and **hianime** (anime). All are
+plain HTTP calls wrapped in POSIX shell — no build step, no frameworks.
 
-## Provider fallback (server-1 → server-2 → server-3)
+## Provider fallback (hicine → film mirrors → hianime)
 
-Search starts on server-1 (hicine). If it returns nothing or the API is
+Search starts on hicine (server-1). If it returns nothing or the API is
 unreachable → **status codes matter**: `select_item` returns `1` for
 "no results", `2` for "user cancelled" (cancelling must NOT trigger the
 chain). On a genuine miss `provider_chain` runs `cmd_mirrors` → `cmd_anime`,
 each tried until one returns 0 — film sources before the anime one, so a
-general query does not land on an anime-only catalogue first. `-A` forces anime only, `-z` forces the
-mirrors. `provider_chain` is the only place that owns this policy.
+general query does not land on an anime-only catalogue first. `-A` forces
+anime only, `-z` forces the mirrors. `provider_chain` is the only place that
+owns this policy.
 
 `prompt_action` splits into two: `play_season_zip` handles a season that
 arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
@@ -26,9 +27,9 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 one list, each row tagged with its host (field 4) — the page referer and the
 history key both need it. Each host's search is a sitemap pull
 (`mirror_sitemaps` parses the index; the post-sitemap count and naming differ
-per host, 3 to 34), fetched 8-way parallel by `mirror_ua_fetch`, then grepped
-for the slug. All four together is ~15 s and ~14 MB, paid only after hicine
-and hianime have both missed.
+per host), fetched 8-way parallel by `mirror_ua_fetch`, then grepped for the
+slug. Both hosts together are ~25 sitemap fetches and ~5 MB, paid only after
+hicine and hianime have both missed.
 
 `-z` skips the first two providers and goes straight to the mirrors; `-z HOST`
 restricts it to one. The host is matched against `MIRROR_HOSTS` by full name or
@@ -57,7 +58,7 @@ so a typo degrades to a plain mirror search rather than a confusing error.
 7. `-D` narrows downloads per `-e N / N-M / -1` via `eps_by_request`
    (`tests/eps_by_request.sh`) — the same helper feeds the confirm count so
    the prompt can't disagree with what downloads. Anime-type hicine titles
-   with missing episodes are gap-filled through server-3 into the same
+   with missing episodes are gap-filled through hianime into the same
    `$_safe` folder.
 
 ## Anime flow (hianime)

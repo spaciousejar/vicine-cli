@@ -12,8 +12,7 @@ What's missing and why it matters.
 
 **Describe the solution you'd like**
 Concretely, with flags/env vars if you have them in mind. Note which
-provider it concerns (server-1 hicine / server-2 hianime / vegamovies
-hianime) if any.
+provider it concerns (server-1 hicine / film mirrors / hianime) if any.
 
 **Describe alternatives you've considered**
 Other approaches or workarounds.
