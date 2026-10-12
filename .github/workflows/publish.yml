@@ -39,11 +39,16 @@ jobs:
         run: |
           ver="$(node -p "require('./package.json').version")"
           # npm publish auto-tags a fresh version as 'latest'; the explicit
-          # dist-tag add needs write scope and can fail on publish-only tokens,
-          # so don't let it fail the job (the release step depends on it).
+          # dist-tag add only matters when that has not happened yet. It
+          # authenticates with the same token as the publish step above —
+          # without NODE_AUTH_TOKEN here it failed E401 on every run and the
+          # step silently degraded to the echo. A token that genuinely cannot
+          # write dist-tags still fails, and that is allowed.
           npm dist-tag add "vicine@${ver}" latest || echo "dist-tag add skipped (token scope)"
           echo "Published vicine@${ver}"
           echo "https://www.npmjs.com/package/vicine"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   release:
     needs: publish

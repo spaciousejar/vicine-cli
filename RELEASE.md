@@ -55,8 +55,11 @@ All on `master`, CI green:
    `gh workflow run "Bump packaged versions"` — a stale bump is a manual fix.
 2. Spot-check the headline channels:
    ```sh
-   npm view opencode-ai version 2>/dev/null; npm view vicine version
-   curl -s https://aur.archlinux.org/rpc/v5/info?vicine | jq .results[0].Version
+   npm view vicine version
+   # AUR answers JSON-RPC and the arg[] form is required — a bare ?vicine
+   # returns "No request type/data specified". The version carries a pkgrel
+   # suffix (1.6.0-2), not the bare tag version.
+   curl -s 'https://aur.archlinux.org/rpc/v5/info?arg[]=vicine' | jq -r '.results[0].Version'
    ```
 3. Done — the monthly audit covers everything else.
 
