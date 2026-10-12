@@ -248,6 +248,14 @@ use `-D "<title>"` or `-A -D`.
 | `-U`, `--update` | Self-update from GitHub (upgrade-only, refuses downgrades) |
 | `--uninstall` | Remove the script from disk (history is kept) |
 | `--tmdb ID` | Skip the title lookup for the TMDB fallback and use this id directly |
+
+The TMDB fallback reads an optional API key from the environment. With
+`TMDB_API_KEY` set it uses TMDB's official API; without one it falls back to
+scraping TMDB's search page, which needs no key but can be rate-limited.
+
+```sh
+export TMDB_API_KEY="your-key"   # tmdb.org -> Settings -> API
+```
 | `--exit-after-play` | Play then exit, return player exit code |
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |

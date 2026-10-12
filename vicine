@@ -1630,7 +1630,17 @@ VIDEASY_API="https://vidrack.created.app/api/sources/videasy"
 VIDEASY_REF="https://www.vidking.net/"
 
 # Title -> "id<TAB>title" rows.
+# With TMDB_API_KEY set this is the official v3 API — no scraping, no rate-limit
+# lottery. Without one it falls back to the search page, which needs no key but
+# can be rate-limited and is tied to their markup. The key is read from the
+# environment only: a --tmdb-key flag would put it in shell history and `ps`.
 tmdb_search() {
+    if [ -n "$tmdb_api_key" ]; then
+        $curl_exe -sfL --max-time 20 \
+            "${TMDB_API}?api_key=${tmdb_api_key}&query=$(henc "$1")" 2>/dev/null |
+            jq -r '.results[]? | "\(.id)\t\(.title)"' 2>/dev/null
+        return
+    fi
     $curl_exe -sfL --max-time 25 -A "$vicine_ua" -e "https://www.themoviedb.org/" \
         "https://www.themoviedb.org/search/movie?query=$(henc "$1")" 2>/dev/null |
         tr '\n' ' ' |
@@ -2063,6 +2073,8 @@ menu_extra_flags="${VICINE_MENU_FLAGS:-}"
 result_limit="${VICINE_RESULT_LIMIT:-200}"
 quality="${VICINE_QUALITY:-best}"
 tmdb_id="${VICINE_TMDB_ID:-}"
+tmdb_api_key="${TMDB_API_KEY:-}"
+TMDB_API="https://api.themoviedb.org/3/search/movie"
 requested_eps=""
 select_nth="${VICINE_SELECT_NTH:-}"
 exit_after_play="${VICINE_EXIT_AFTER_PLAY:-0}"

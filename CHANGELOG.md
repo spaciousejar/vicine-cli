@@ -169,9 +169,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anchored on the result card (`href="/movie/<id>"><h2..><span>Title`) so the
   sidebar lists cannot match, and `tmdb_pick` ranks exact title above prefix
   rather than taking TMDB's first row (which returns *Bangalore Naatkal* for
-  "bangalore days" and would play the wrong film). `--tmdb ID` (or
-  `VICINE_TMDB_ID`) skips the lookup. Sources rotate in and out, so an empty
-  list is a normal result, not an error.
+  "bangalore days" and would play the wrong film). Setting `TMDB_API_KEY`
+  switches the lookup to TMDB's official v3 API, removing the scrape and its
+  rate-limit exposure; the key is read from the environment only, never a flag,
+  so it stays out of shell history and `ps`. `--tmdb ID` (or
+  `VICINE_TMDB_ID`) skips the lookup entirely. Sources rotate in and out, so an
+  empty list is a normal result, not an error.
 - `provider_chain` now knows whether anything actually started: `cmd_mirrors`
   and `cmd_anime` both exit 0 when they come back empty-handed, so a `||`
   chain stopped at anime and never reached the fallback. `play_url` sets a flag

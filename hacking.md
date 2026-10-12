@@ -20,7 +20,8 @@ anime only, `-z` forces the mirrors. `provider_chain` is the only place that
 owns this policy.
 
 After anime, a last fallback runs `cmd_videasy` — the title resolves to a TMDB
-id (`tmdb_search` scrapes TMDB's search page, no API key) and the id to an HLS
+id (`tmdb_search`, which uses the official v3 API when `TMDB_API_KEY` is set and
+falls back to scraping the search page when it is not) and the id to an HLS
 source. Its catalogue is independent of hicine's and the mirrors', which is the
 point: it plays titles no mirror carries. `tmdb_pick` ranks an exact title above
 a prefix match because TMDB's own ranking puts the wrong film first for some

@@ -46,4 +46,46 @@ ROWS='1085271	Bangalore Naatkal
 grep -qF 'href="/movie/[0-9]+"><h2[^>]*><span>[^<]+' "$SCRIPT" \
     || _fail "tmdb_search lost its result-card anchor"
 
-echo "PASS (6 checks)"
+# --- the TMDB_API_KEY branch -------------------------------------------------
+# With a key, tmdb_search uses the official v3 API instead of scraping. A live
+# call is not testable here (no valid key in CI), so the branch is driven with
+# a stubbed curl that returns TMDB's real response shape.
+grep -qF 'tmdb_api_key="${TMDB_API_KEY:-}"' "$SCRIPT" \
+    || _fail "the key is not read from the environment"
+grep -qF 'api_key=${tmdb_api_key}' "$SCRIPT" \
+    || _fail "the key branch does not call the v3 API"
+
+fake="$(mktemp)"
+cat > "$fake" <<'CURLSTUB'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    *api_key=*)
+      cat <<'J'
+{"page":1,"results":[
+ {"id":1085271,"title":"Bangalore Naatkal","release_date":"1996-02-09"},
+ {"id":268660,"title":"Bangalore Days","release_date":"2014-01-30"},
+ {"id":999,"title":"Bangalore Days 2","release_date":null}]}
+J
+      exit 0 ;;
+  esac
+done
+exit 1
+CURLSTUB
+chmod +x "$fake"
+
+curl_exe="$fake"
+tmdb_api_key="test-key"
+
+got="$(tmdb_search "bangalore days" | head -1)"
+[ "$got" = "1085271	Bangalore Naatkal" ] \
+    || _fail "API branch did not parse results, got: '$got'"
+
+# the ranking rule has to hold on the API path too — this is the case the
+# provider exists for
+[ "$(tmdb_search "bangalore days" | tmdb_pick "bangalore days")" = "268660" ] \
+    || _fail "API branch did not pick the exact title over TMDB's ranking"
+
+rm -f "$fake"
+
+echo "PASS (9 checks)"
