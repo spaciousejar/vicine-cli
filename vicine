@@ -1594,7 +1594,7 @@ cmd_anime() {
 # gateway chain, the same dead client-side search. Two more siblings
 # (gokuhd.com, xprimehub.pics) were measured and dropped; see the CHANGELOG.
 MIRROR_HOSTS="vegamovies.gallery
-rogmovies.best"
+rogmovies.one"
 
 # the post-sitemap URLs a host's sitemap index lists
 mirror_sitemaps() { # host

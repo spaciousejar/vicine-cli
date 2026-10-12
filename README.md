@@ -30,7 +30,7 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Anime support** — dub/sub audio via hianime.at
 - **Automatic provider fallback** — when the primary catalogue (server-1)
   has no result or is down, the search falls back to two film mirrors
-  (vegamovies.gallery, then rogmovies.best) and finally to the hianime anime
+  (vegamovies.gallery, then rogmovies.one) and finally to the hianime anime
   catalogue, so a general query exhausts the film sources before the anime one
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer

@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sites". `-z HOST` matched with a pattern too, where `*` silently narrowed
   the search to one host and `vegamovies|rogmovies` dropped a host that was
   never named; both are literal compares now.
+- The second mirror's domain was `rogmovies.best`, which no longer resolves —
+  every hicine miss paid its fetch timeout for nothing. The live family domain
+  is `rogmovies.one` (the same operator's site, advertised by vegamovies.gallery),
+  and it speaks the identical nexdrive → fastdl → googleusercontent chain, so it
+  is a drop-in replacement. Verified end-to-end through `mirror_search` →
+  `mirror_links` → `mirror_resolve`.
 - `-e N-M` and the episode multi-select no longer stop early on a season with
   gaps. Range advance stepped to `_cur_ep + 1`, which lands on a number the
   season does not have (0-specials, absolute numbering); the lookup came back
@@ -153,7 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-z vegamovies` and `-z vegamovies.gallery` both work. An unrecognised word
   is left as query text, so `vicine -z dune` still searches the mirrors for
   "dune".
-- Mirror fallbacks `vegamovies.gallery` and `rogmovies.best` — same operator,
+- Mirror fallbacks `vegamovies.gallery` and `rogmovies.one` — same operator,
   same `nexdrive.fit` → `fastdl.zip/embed` → googleusercontent gateway chain,
   and the same dead client-side search (`?s=` returns 200 with no results in
   the HTML). Two sibling sites were measured and dropped: `gokuhd.com`

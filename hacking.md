@@ -5,7 +5,7 @@ rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
 works.
 
 vicine scrapes three backends: **hicine** (movies/series), the **film mirrors**
-(`vegamovies.gallery`, then `rogmovies.best`) and **hianime** (anime). All are
+(`vegamovies.gallery`, then `rogmovies.one`) and **hianime** (anime). All are
 plain HTTP calls wrapped in POSIX shell — no build step, no frameworks.
 
 ## Provider fallback (hicine → film mirrors → hianime)
