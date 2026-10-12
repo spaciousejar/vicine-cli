@@ -126,6 +126,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_DIM}--rofi${C_RESET}                  Use rofi instead of fzf
     ${C_DIM}--dmenu${C_RESET}                 Use dmenu instead of fzf
     ${C_DIM}--no-detach${C_RESET}             Don't detach player
+    ${C_DIM}--tmdb ID${C_RESET}             Skip the title lookup, use this TMDB id
     ${C_DIM}--exit-after-play${C_RESET}       Play then exit, return player exit code
     ${C_DIM}--download-dir${C_RESET}          Set download directory
     ${C_DIM}--page N${C_RESET}                Browse page N (default 1)
@@ -562,7 +563,9 @@ play_url() {
             if [ "$exit_after_play" = 1 ]; then
                 # foreground so the player's exit code is returned
                 $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url"
-                return $?
+                _pl_rc=$?
+                [ "$_pl_rc" -eq 0 ] && _chain_played=1
+                return "$_pl_rc"
             fi
             if pgrep -f "IINA" >/dev/null 2>&1; then
                 nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
@@ -575,10 +578,12 @@ play_url() {
                 nohup $player_function $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
             else
                 $player_function $_hdr --force-media-title="$_name" "$_url"
-                return $?
+                _pl_rc=$?
+                [ "$_pl_rc" -eq 0 ] && _chain_played=1
+                return "$_pl_rc"
             fi
             ;;
-        download) do_download "$_url" "$_name" "$_ref" ;;
+        download) do_download "$_url" "$_name" "$_ref"; _pl_rc=$? ;;
         *)
             if [ "$exit_after_play" = 1 ]; then
                 if [ -n "$_ref" ]; then
@@ -586,7 +591,9 @@ play_url() {
                 else
                     $player_function "$_url"
                 fi
-                return $?
+                _pl_rc=$?
+                [ "$_pl_rc" -eq 0 ] && _chain_played=1
+                return "$_pl_rc"
             fi
             if [ -n "$_ref" ]; then
                 nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
@@ -595,8 +602,12 @@ play_url() {
                 nohup $player_function "$_url" >/dev/null 2>&1 &
                 _player_pid=$!
             fi
+            _pl_rc=0
             ;;
     esac
+    # the fallthrough providers return 0 even when they found nothing playable,
+    # so the chain needs to know for itself whether anything was started
+    [ "$_pl_rc" -eq 0 ] && _chain_played=1
 }
 
 # ─── Download ───────────────────────────────────────────────────────────────
@@ -1140,9 +1151,14 @@ prompt_action() {
 # -i should not launch a full playback search on a backup.
 provider_chain() {
     if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
-        warn "No result on server-1 ($2) — trying the mirrors, then anime."
+        warn "No result on server-1 ($2) — trying the mirrors, then anime, then TMDB."
         _backup_used=1
+        _chain_played=""
+        # cmd_mirrors and cmd_anime both exit 0 when they come back empty-handed,
+        # so `||` alone stops the chain at anime. Fall through to the TMDB
+        # provider unless something was actually started.
         cmd_mirrors "$1" || cmd_anime "$1"
+        [ -n "$_chain_played" ] || cmd_videasy "$1" "$tmdb_id"
         return $?
     fi
     return 1
@@ -1601,6 +1617,84 @@ cmd_anime() {
     anime_play_loop
 }
 
+# ─── Videasy provider (a TMDB catalogue behind a public API) ─────────────────
+# The last fallback, and the only one whose catalogue is independent of both
+# hicine and the mirrors: a title resolves to a TMDB id, and the id to an HLS
+# source. It is what plays a title no mirror carries.
+#
+# No API key: the id comes from TMDB's own search page. The pattern is anchored
+# on the result card (href="/movie/<id>"><h2..><span>Title) because a plain
+# /movie/<id> grep also matches the sidebar lists further down the page.
+VIDEASY_API="https://vidrack.created.app/api/sources/videasy"
+# the CDN is referer-gated; this is what the player and yt-dlp need to send
+VIDEASY_REF="https://www.vidking.net/"
+
+# Title -> "id<TAB>title" rows.
+tmdb_search() {
+    $curl_exe -sfL --max-time 25 -A "$vicine_ua" -e "https://www.themoviedb.org/" \
+        "https://www.themoviedb.org/search/movie?query=$(henc "$1")" 2>/dev/null |
+        tr '\n' ' ' |
+        grep -oE 'href="/movie/[0-9]+"><h2[^>]*><span>[^<]+' |
+        sed 's|href="/movie/||; s|"><h2[^>]*><span>|\t|'
+}
+
+# The matching row: exact title first, then one that starts with the query. TMDB
+# ranks "bangalore naatkal" above "bangalore days" for that query, and playing
+# the first row unfiltered silently plays the wrong film.
+tmdb_pick() { # query, rows on stdin -> id
+    awk -F'\t' -v q="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')" '
+        { t = tolower($2); gsub(/[^a-z0-9]/, "", t)
+          if (t == q) { print $1; exit }
+          if (pf == "" && index(q, t) == 1 && length(t) > 3) pf = $1 }
+        END { if (pf != "") print pf }'
+}
+
+# Play or download a title through the videasy API.
+#   $1 = title, $2 = explicit TMDB id (skips the lookup)
+cmd_videasy() {
+    _vy_q="$1"
+    _vy_id="$2"
+    if [ -n "$_vy_id" ]; then
+        _vy_title="$_vy_q"
+    else
+        _vy_rows="$(tmdb_search "$_vy_q")"
+        if [ -z "$_vy_rows" ]; then
+            warn "No TMDB match for: $_vy_q"
+            return 1
+        fi
+        _vy_id="$(printf '%s\n' "$_vy_rows" | tmdb_pick "$_vy_q")"
+        [ -n "$_vy_id" ] || _vy_id="$(printf '%s\n' "$_vy_rows" | head -1 | cut -f1)"
+        _vy_title="$(printf '%s\n' "$_vy_rows" | awk -F'\t' -v i="$_vy_id" '$1==i{print $2; exit}')"
+    fi
+    info "TMDB match: ${_vy_title:-$_vy_q} ($_vy_id)"
+
+    _vy_json="$($curl_exe -sfL --max-time 25 -A "$vicine_ua" -e "$VIDEASY_REF" \
+        "${VIDEASY_API}?id=${_vy_id}&type=movie" 2>/dev/null)"
+    _vy_links="$(printf '%s' "$_vy_json" | jq -r '.sources[]? | "\(.quality // "auto")>\(.url)"' 2>/dev/null)"
+    if [ -z "$_vy_links" ]; then
+        # sources rotate in and out; an empty list is normal, not an error
+        warn "No stream source for ${_vy_title:-$_vy_q} right now (sources rotate)"
+        return 1
+    fi
+
+    # the same ladder every other provider uses
+    _vy_ql="$(printf '%s\n' "$_vy_links" | cut -d'>' -f1 | grep -E '^[0-9]+p$' | sort -u)"
+    [ -n "$_vy_ql" ] || _vy_ql=$(printf '480p\n720p\n1080p\n2160p')
+    _vy_newq=$(printf '%s\n' "$_vy_ql" | pick_quality_menu "Quality: " || true)
+    [ -n "$_vy_newq" ] && quality="$_vy_newq"
+    _vy_url="$(anime_pick_quality "$_vy_links" | head -1 | cut -d'>' -f2-)"
+    [ -n "$_vy_url" ] || return 1
+
+    if [ "$player_function" = "download" ] || [ "$download_all_mode" = 1 ]; then
+        do_download "$_vy_url" "$(sanitize "${_vy_title:-$_vy_q}")" "$VIDEASY_REF"
+        return $?
+    fi
+    play_url "$_vy_url" "${_vy_title:-$_vy_q}" "$VIDEASY_REF"
+    _vy_rc=$?
+    [ "$_vy_rc" -eq 0 ] && update_history "tmdb-$_vy_id" "${_vy_title:-$_vy_q}" movie 0 0
+    return "$_vy_rc"
+}
+
 # ─── Mirror providers ───────────────────────────────────────────────────────
 # Film fallbacks, tried before the anime provider: a general query should
 # exhaust the film catalogues before hitting an anime-only one. The sites'
@@ -1968,6 +2062,7 @@ menu_program="${VICINE_MENU:-fzf}"
 menu_extra_flags="${VICINE_MENU_FLAGS:-}"
 result_limit="${VICINE_RESULT_LIMIT:-200}"
 quality="${VICINE_QUALITY:-best}"
+tmdb_id="${VICINE_TMDB_ID:-}"
 requested_eps=""
 select_nth="${VICINE_SELECT_NTH:-}"
 exit_after_play="${VICINE_EXIT_AFTER_PLAY:-0}"
@@ -2065,6 +2160,7 @@ while [ $# -gt 0 ]; do
         --rofi)           menu_program="rofi" ;;
         --dmenu)          menu_program="dmenu" ;;
         --no-detach)      no_detach=1 ;;
+        --tmdb)           shift; [ -n "$1" ] || die "Missing value for --tmdb"; tmdb_id="$1" ;;
         --download-dir)   shift; [ -n "$1" ] || die "Missing value for --download-dir"; download_dir="$1" ;;
         --page)           shift; [ -n "$1" ] || die "Missing value for --page"; browse_page="$1" ;;
         --limit)          shift; [ -n "$1" ] || die "Missing value for --limit"; browse_limit="$1" ;;

@@ -19,6 +19,19 @@ general query does not land on an anime-only catalogue first. `-A` forces
 anime only, `-z` forces the mirrors. `provider_chain` is the only place that
 owns this policy.
 
+After anime, a last fallback runs `cmd_videasy` — the title resolves to a TMDB
+id (`tmdb_search` scrapes TMDB's search page, no API key) and the id to an HLS
+source. Its catalogue is independent of hicine's and the mirrors', which is the
+point: it plays titles no mirror carries. `tmdb_pick` ranks an exact title above
+a prefix match because TMDB's own ranking puts the wrong film first for some
+queries. The chain falls through to it only when `_chain_played` is unset —
+`cmd_mirrors` and `cmd_anime` both exit 0 when they find nothing, so `||`
+alone would stop the chain at anime. `--tmdb ID` skips the lookup.
+
+The CDN is referer-gated, so `play_url` gets `https://www.vidking.net/` as its
+referer (the same path the anime provider already uses). Sources rotate in and
+out, so an empty `.sources` list is normal and the provider just reports it.
+
 `prompt_action` splits into two: `play_season_zip` handles a season that
 arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 "nothing to play" — see `tests/season_zip.sh`, which stubs the network.

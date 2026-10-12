@@ -162,6 +162,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A TMDB fallback provider, tried last: the title resolves to a TMDB id and the
+  id to an HLS source, via `vidrack.created.app/api/sources/videasy`. Its
+  catalogue is independent of hicine's and the mirrors', so it plays a title no
+  mirror carries. No API key — `tmdb_search` reads TMDB's own search page,
+  anchored on the result card (`href="/movie/<id>"><h2..><span>Title`) so the
+  sidebar lists cannot match, and `tmdb_pick` ranks exact title above prefix
+  rather than taking TMDB's first row (which returns *Bangalore Naatkal* for
+  "bangalore days" and would play the wrong film). `--tmdb ID` (or
+  `VICINE_TMDB_ID`) skips the lookup. Sources rotate in and out, so an empty
+  list is a normal result, not an error.
+- `provider_chain` now knows whether anything actually started: `cmd_mirrors`
+  and `cmd_anime` both exit 0 when they come back empty-handed, so a `||`
+  chain stopped at anime and never reached the fallback. `play_url` sets a flag
+  and the chain falls through to TMDB only when nothing was played.
 - `-z` / `--mirrors` goes straight to the film mirrors, skipping hicine and
   hianime; `-z HOST` narrows to one — the full host or its first label, so
   `-z vegamovies` and `-z vegamovies.gallery` both work. An unrecognised word

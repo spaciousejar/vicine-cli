@@ -30,8 +30,9 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Anime support** — dub/sub audio via hianime.at
 - **Automatic provider fallback** — when the primary catalogue (server-1)
   has no result or is down, the search falls back to two film mirrors
-  (vegamovies.gallery, then rogmovies.one) and finally to the hianime anime
-  catalogue, so a general query exhausts the film sources before the anime one
+  (vegamovies.gallery, then rogmovies.one), then the hianime anime catalogue,
+  then a TMDB-backed source provider, so a general query exhausts the film
+  sources before the anime one
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer
 > MegaPlay-based servers, which can't be resolved by the script — those show
@@ -246,6 +247,7 @@ use `-D "<title>"` or `-A -D`.
 | `-n`, `--select-nth` | Select result by index N (non-interactive) |
 | `-U`, `--update` | Self-update from GitHub (upgrade-only, refuses downgrades) |
 | `--uninstall` | Remove the script from disk (history is kept) |
+| `--tmdb ID` | Skip the title lookup for the TMDB fallback and use this id directly |
 | `--exit-after-play` | Play then exit, return player exit code |
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |
