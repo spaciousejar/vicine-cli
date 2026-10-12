@@ -88,4 +88,21 @@ got="$(tmdb_search "bangalore days" | head -1)"
 
 rm -f "$fake"
 
-echo "PASS (9 checks)"
+# --- the chain must survive an empty anime search ---------------------------
+# cmd_anime used to die on an empty search, and die exits the whole script, so
+# an hianime miss skipped the TMDB provider entirely — the fallback that only
+# runs when anime finds nothing was the one case it never ran in.
+grep -qF '_in_chain=1' "$SCRIPT" || _fail "provider_chain does not set _in_chain"
+grep -qF '[ -n "$_in_chain" ] && return 1' "$SCRIPT" \
+    || _fail "cmd_anime does not return on an empty search inside the chain"
+
+anidb_search() { :; }          # an hianime miss
+_in_chain=1
+cmd_anime "no such anime here" >/dev/null 2>&1
+[ "$?" = 1 ] || _fail "cmd_anime should return 1 in the chain, not die"
+
+# and as the -A entry point it must still be a hard stop
+( _in_chain=""; cmd_anime "no such anime here" >/dev/null 2>&1 )
+[ "$?" = 1 ] || _fail "-A should still exit 1 when anime finds nothing"
+
+echo "PASS (12 checks)"

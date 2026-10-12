@@ -179,6 +179,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `cmd_anime` both exit 0 when they come back empty-handed, so a `||`
   chain stopped at anime and never reached the fallback. `play_url` sets a flag
   and the chain falls through to TMDB only when nothing was played.
+  `cmd_anime` also stops calling `die` on an empty search when it is running as
+  part of that chain — `die` exits the whole script, so an hianime miss skipped
+  the TMDB provider entirely, which is the only situation the fallback exists
+  for. As the `-A` entry point it is still a hard stop.
+- The TMDB lookup retries. Cloudflare resets the TLS handshake on a fraction of
+  requests to `api.themoviedb.org` (measured 2 of 6 succeeding), and plain
+  `curl --retry` does not retry those — it only covers transient HTTP errors.
+  `--retry-all-errors` takes the same requests to 8 of 8.
 - `-z` / `--mirrors` goes straight to the film mirrors, skipping hicine and
   hianime; `-z HOST` narrows to one — the full host or its first label, so
   `-z vegamovies` and `-z vegamovies.gallery` both work. An unrecognised word

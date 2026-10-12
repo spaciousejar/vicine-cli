@@ -1156,8 +1156,12 @@ provider_chain() {
         _chain_played=""
         # cmd_mirrors and cmd_anime both exit 0 when they come back empty-handed,
         # so `||` alone stops the chain at anime. Fall through to the TMDB
-        # provider unless something was actually started.
+        # provider unless something was actually started. _in_chain also turns
+        # cmd_anime's "no results" from a die (which would exit the whole script,
+        # skipping the fallback) into a plain return.
+        _in_chain=1
         cmd_mirrors "$1" || cmd_anime "$1"
+        _in_chain=""
         [ -n "$_chain_played" ] || cmd_videasy "$1" "$tmdb_id"
         return $?
     fi
@@ -1466,7 +1470,12 @@ cmd_anime() {
     [ -z "$_query" ] && die "Missing anime search query"
 
     anime_list="$(anidb_search "$_query")"
-    [ -z "$anime_list" ] && die "No results found."
+    # as the -A entry point an empty search is a hard stop; inside the fallback
+    # chain it must return so the next provider gets a turn
+    if [ -z "$anime_list" ]; then
+        [ -n "$_in_chain" ] && return 1
+        die "No results found."
+    fi
 
     # select anime (index-prefixed non-interactive or menu)
     if [ -n "$select_nth" ]; then
@@ -1636,12 +1645,17 @@ VIDEASY_REF="https://www.vidking.net/"
 # environment only: a --tmdb-key flag would put it in shell history and `ps`.
 tmdb_search() {
     if [ -n "$tmdb_api_key" ]; then
-        $curl_exe -sfL --max-time 20 \
+        # --retry-all-errors, not --retry: TMDB's Cloudflare resets the TLS
+        # handshake on a fraction of requests, and plain --retry only retries
+        # transient HTTP errors, so it gave up on those. Measured 2/6 before,
+        # 8/8 after. Needs curl >= 7.71 (2022).
+        $curl_exe -sfL --max-time 20 --retry 2 --retry-all-errors --retry-delay 1 \
             "${TMDB_API}?api_key=${tmdb_api_key}&query=$(henc "$1")" 2>/dev/null |
             jq -r '.results[]? | "\(.id)\t\(.title)"' 2>/dev/null
         return
     fi
-    $curl_exe -sfL --max-time 25 -A "$vicine_ua" -e "https://www.themoviedb.org/" \
+    $curl_exe -sfL --max-time 25 --retry 2 --retry-all-errors --retry-delay 1 \
+        -A "$vicine_ua" -e "https://www.themoviedb.org/" \
         "https://www.themoviedb.org/search/movie?query=$(henc "$1")" 2>/dev/null |
         tr '\n' ' ' |
         grep -oE 'href="/movie/[0-9]+"><h2[^>]*><span>[^<]+' |
