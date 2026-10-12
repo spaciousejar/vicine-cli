@@ -76,6 +76,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code. `$?` referred to the `[` test, so it always exited 0 (SC2319, #39).
 - ShellCheck `warning`+ is enforced in CI, plus suites for the new download
   guards and the `-D` prefetch scheduling (#39, #53).
+- `-A -D` on an anime split into two cours silently skipped the whole second
+  one. hianime lists the episode numbers twice under different internal ids and
+  `anidb_episodes` dedups the whole row, so both survived; every destination
+  was a hardcoded `season-1/S1E##`, so the second copy of each number hit
+  `dl_find` and printed "Already exists". The list is now tagged with which
+  run of a number each row is and that picks the season folder.
+- Watch history no longer loses a row when two copies run at once. It staged
+  through a fixed `$histfile.tmp`, so the second copy's `awk` truncation
+  erased the first one's new row before its `mv` — measured at 1 row kept out
+  of 2. Staging goes through `mktemp` now.
+- A query containing a regex metacharacter no longer breaks mirror search.
+  `mirror_words_regex` fed the raw word to `grep -E`, so `vicine -z "a(b"`
+  printed `grep: Unmatched ( or \(` and reported "No results on the mirror
+  sites". `-z HOST` matched with a pattern too, where `*` silently narrowed
+  the search to one host and `vegamovies|rogmovies` dropped a host that was
+  never named; both are literal compares now.
+- `-e N-M` and the episode multi-select no longer stop early on a season with
+  gaps. Range advance stepped to `_cur_ep + 1`, which lands on a number the
+  season does not have (0-specials, absolute numbering); the lookup came back
+  empty and the loop exited mid-range without a word. It walks to the next
+  episode that exists, like the `next` menu item always did.
+- A failed season-archive download no longer records watch history. It was the
+  only download path that ignored `do_download`'s result, so `-c` offered to
+  resume a file that was never written.
+- `-z -D` on a mirror *season* is refused with an explanation instead of
+  downloading one unlabelled episode and naming it after the whole season.
+- Ctrl-C during a mirror search no longer strands its staging directory
+  (~5 MB per host) in `/tmp`: `mirror_search` runs inside a `$( )` subshell the
+  main EXIT trap cannot reach, so it now traps INT/TERM itself. The EXIT trap
+  also covers `${tmpfile}.tmp`, which `cmd_browse` stages through.
 - Two suites cover the last pure provider code: `tests/anime_plumbing.sh`
   (endpoint templates, `zoko_xor`, `anime_pick_quality`) and `tests/sanitize.sh`
   — `zoko_xor` is pinned to a known-plaintext fixture because a wrong key just
@@ -84,6 +114,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the template as the format. The templates are hardcoded today, so this
   is not a live bug, but a `%` anywhere in one would become a format specifier
   the moment it gains an env override (#38).
+- `install.sh` stages the new script next to the target and renames it instead
+  of letting `install(1)` truncate the destination, which a `vicine` already
+  playing in another terminal still has open.
+- The monthly audit workflow now runs: it had no `actions/checkout`, so `gh`
+  could not resolve the repository and the job failed with "not a git
+  repository" on every scheduled run.
+- `pkg-bump` now commits the `aur/PKGBUILD` it rewrites. The sed ran on the
+  runner but the auto-commit's file list left it out, so the in-repo AUR pin
+  would have gone stale and failed `release-verify` at the next release.
+- The ShellCheck action is pinned to a release SHA instead of `@master`.
+- `season_count` and `show_info` read every `season_N` of the selected item in
+  one `jq` call instead of spawning up to twenty; the season menu, the numbered
+  picker, the quality picker and the movie-URL pick are shared helpers instead
+  of three near-copies each. The unreachable local-manifest branch in
+  `do_download` is gone (`check_stream_url` refuses every non-http URL).
+- New `tests/history.sh` covers the one file vicine writes between runs, which
+  had no coverage: row write, dedup, numeric slugs, tab/newline flattening and
+  the unique staging file.
 
 ### Changed
 

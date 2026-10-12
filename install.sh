@@ -60,9 +60,17 @@ trap 'rm -f "$tmpfile"' EXIT
 curl -fsSL "$url" -o "$tmpfile" || { echo "failed to download script" >&2; exit 1; }
 [ -s "$tmpfile" ] || { echo "downloaded script is empty — aborting" >&2; exit 1; }
 sh -n "$tmpfile" || { echo "downloaded script failed syntax check" >&2; exit 1; }
-install -m 755 "$tmpfile" "$target/vicine"
 
-echo "Installed vicine to $target/vicine"
+# Stage next to the target and rename into place. install(1) truncates the
+# destination, and a vicine already playing in another terminal still has that
+# file open — dash reads scripts in chunks, so a half-written file can execute.
+dest="$target/vicine"
+new="$(mktemp "$target/.vicine.XXXXXX")" || { echo "cannot write to $target" >&2; exit 1; }
+trap 'rm -f "$tmpfile" "$new"' EXIT
+cat "$tmpfile" > "$new" && chmod 755 "$new" && mv -f "$new" "$dest" \
+    || { echo "failed to write $dest" >&2; exit 1; }
+
+echo "Installed vicine to $dest"
 case ":$PATH:" in
     *":$target:"*) ;;
     *) echo "Add $target to your PATH, e.g. in ~/.bashrc: export PATH=\"$target:\$PATH\"" ;;

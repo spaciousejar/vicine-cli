@@ -220,7 +220,12 @@ vicine -i batman               # Show info only (no play)
 `VICINE_DOWNLOAD_DIR`), one at a time by default so each episode shows
 yt-dlp's own progress bar; set `VICINE_DL_JOBS=2` (or more) for parallel
 batches — per-job bars are suppressed then and a `[####------] done/total`
-tally is shown instead. Movies keep the flat layout.
+tally is shown instead. Movies keep the flat layout. An anime split into two
+cours lists its episode numbers twice, so the second run goes to
+`season-2/` rather than overwriting the first. Mirror seasons are not
+downloadable with `-D`: those pages carry one unlabelled button per episode,
+so `-z -D` says so instead of saving one episode under the season's name —
+use `-D "<title>"` or `-A -D`.
 
 ### Options
 

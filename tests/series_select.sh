@@ -6,7 +6,8 @@
 # real implementations instead of testing sed-extracted copies.
 # Usage: sh tests/series_select.sh
 
-VICINE_LIB=1 . "$(dirname "$0")/../vicine"
+SCRIPT="$(dirname "$0")/../vicine"
+VICINE_LIB=1 . "$SCRIPT"
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }
 
@@ -50,4 +51,18 @@ count="$(printf '%s\n' "$ep_list" | wc -l | tr -d ' ')"
 [ "$(sanitize '../../etc/passwd')" = "....etcpasswd" ] || _fail "sanitize let a separator through"
 [ "$(sanitize '..')" = ".." ] || _fail "sanitize now strips '.', which changes the traversal guard's input"
 
-echo "PASS (13 checks)"
+# A range (-e N-M, or the multi-select min/max) must advance to the next
+# episode that EXISTS, not to +1: hicine seasons are not always 1..N, and +1
+# landed on a missing number, get_episode_url came back empty and the loop
+# stopped mid-range without saying so. Inline in episode_loop, so: on source.
+grep -qF 'awk -v n="$_cur_ep" '"'"'$1>n{print $1; exit}'"'"'' "$SCRIPT" \
+    || _fail "episode_loop no longer walks to the next existing episode"
+grep -qF '_cur_ep=$(( _cur_ep + 1 ))' "$SCRIPT" \
+    && _fail "episode_loop advances with +1 again, which stops a gapped season early"
+
+# season_count reads the item in ONE jq call now; a 20-call scan per check
+# made every -D start pay 20+ processes
+grep -qF 'select(.key | test("^season_[0-9]+$"))' "$SCRIPT" \
+    || _fail "season_fields is gone; season_count went back to the 20-call scan"
+
+echo "PASS (17 checks)"

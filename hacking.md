@@ -35,6 +35,18 @@ hicine and hianime have both missed.
 restricts it to one. The host is matched against `MIRROR_HOSTS` by full name or
 first label, and an unmatched word stays part of the query rather than erroring —
 so a typo degrades to a plain mirror search rather than a confusing error.
+Matching is a literal compare, not a `grep -E` pattern: the word is user input,
+and a metacharacter used to match a host that was never named (or error out,
+which read as "no results").
+
+`cmd_mirrors` stages its sitemap pull in a `mktemp -d` and traps INT/TERM to
+remove it — it runs inside a `$( )` subshell, so the main EXIT trap cannot
+reach it and Ctrl-C used to leave ~5 MB per host in `/tmp` forever.
+
+`-D` is refused on a mirror *season* entry: those pages carry one unlabelled
+"Download Now" button per episode and quality, so a whole-season download would
+have saved a single episode under the season's name. `-d` (one file) still
+works.
 
 ## Movie/series flow (hicine)
 
@@ -79,6 +91,14 @@ so a typo degrades to a plain mirror search rather than a confusing error.
 5. The episode picker displays `<row> <ep>`; the row is mapped back through
    the list (`sed -n "${row}p"`) so non-contiguous numbering (0-specials,
    S2@13) plays the right episode (`tests/anime_picker.sh`).
+6. A split-cour anime lists its episode numbers **twice** under different
+   internal ids — `anidb_episodes` dedups the whole `id<TAB>number` row, not
+   the number, so both survive. The `-D` loop therefore tags every row with
+   which run of a number it is (one awk pass) and passes that occurrence to
+   `anime_play_episode`, which picks `season-N/SNE##` from it. Without that
+   the second cour landed on the first one's file, `dl_find` reported
+   "Already exists", and half the series was silently skipped
+   (`tests/anime_plumbing.sh`).
 
 
 ## Debugging
@@ -106,7 +126,13 @@ so a typo degrades to a plain mirror search rather than a confusing error.
 - State lives in `mktemp` files: `tmpfile` = search JSON, `tmpfile2` =
   selected item, `tmpfile3` = menu lists, `tmpfile4` = player log.
   An EXIT trap cleans them and preserves the exit code; Ctrl-C is 130,
-  HUP/TERM are 129/143.
+  HUP/TERM are 129/143. Every staging file is created with `mktemp` — a
+  fixed name is a data race between two copies (the history file's
+  `$histfile.tmp` used to be one) and a symlink-clobber target.
+- Menu/list plumbing is shared, not copy-pasted: `season_menu`,
+  `numbered_menu`, `pick_quality_menu` and `pick_movie_url`. Season data is
+  read once per item by `season_fields` (one `jq` call for every
+  `season_N`), not twenty `jq` calls scanning 1..20.
 - Exit codes matter: `die` → 1, interrupts → 130, player exit codes pass
   through with `--exit-after-play`.
 - Quality is normalized lowercase and `4k` → `2160p` before any matching.

@@ -153,7 +153,7 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile3}.pre" "${tmpfile3}.vega" "${tmpfile4}.vega"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile}.tmp" "${tmpfile3}.pre" "${tmpfile3}.vega" "${tmpfile4}.vega"
     exit "$_exit_code"
 }
 
@@ -295,6 +295,17 @@ movie_quality_url() {
     printf "%s" "$1" | awk -F'\t' -v q="$2" 'index(tolower($2), tolower(q))' | tail -1 | cut -f1
 }
 
+# Parsed "url\tdesc\tsize" lines -> the URL to use: the highest resolution, or
+# the one whose description carries $quality when a specific one was asked for.
+pick_movie_url() {
+    _pmu="$(movie_best_url "$1")"
+    if [ "$quality" != "best" ]; then
+        _pmq="$(movie_quality_url "$1" "$quality")"
+        [ -n "$_pmq" ] && _pmu="$_pmq"
+    fi
+    printf '%s' "$_pmu"
+}
+
 # ─── Selection helpers ──────────────────────────────────────────────────────
 
 # Present items from JSON file via fzf/nth, write selected JSON to tmpfile2
@@ -358,15 +369,10 @@ show_info() {
         done
     fi
 
-    _i=1
-    while [ "$_i" -le 20 ]; do
-        _season=$(jq -r ".season_${_i} // empty" "$_f")
-        if [ -n "$_season" ]; then
-            _ep_count=$(printf "%s" "$_season" | grep -c '^Episode')
-            printf "\n"
-            printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s episodes)${C_RESET}\n" "$_i" "$_ep_count"
-        fi
-        _i=$(( _i + 1 ))
+    season_fields | while IFS='	' read -r _sn _season; do
+        _ep_count=$(printf "%s" "$_season" | grep -c '^Episode')
+        printf "\n"
+        printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s episodes)${C_RESET}\n" "$_sn" "$_ep_count"
     done
 
     printf "\n"
@@ -381,17 +387,35 @@ is_series() {
     [ "$(season_count)" -gt 0 ]
 }
 
+# Every non-empty season_N field of the selected item, as "N<TAB>text". One
+# jq call: season_count and show_info each used to spawn jq twenty times to
+# scan 1..20 and hope none of them was missing.
+season_fields() {
+    [ -f "$tmpfile2" ] || return 1
+    jq -r 'to_entries[] | select(.key | test("^season_[0-9]+$")) | select((.value // "") != "") | "\(.key[7:])\t\(.value)"' "$tmpfile2" 2>/dev/null
+}
+
 # Get available seasons count
 season_count() {
     [ -f "$tmpfile2" ] || { printf '%s\n' 0; return; }
-    _count=0
-    _i=1
-    while [ "$_i" -le 20 ]; do
-        _s=$(jq -r ".season_${_i} // empty" "$tmpfile2")
-        [ -n "$_s" ] && _count="$_i"
-        _i=$(( _i + 1 ))
+    season_fields | awk -F'\t' '$1+0 > m { m = $1+0 } END { print m+0 }'
+}
+
+# "Season 1..N" into $tmpfile3, offered as a menu. $3 = extra menu flags.
+season_menu() { # count, prompt, extra flags
+    printf "" > "$tmpfile3"
+    _smi=1
+    while [ "$_smi" -le "$1" ]; do
+        printf 'Season %s\n' "$_smi" >> "$tmpfile3"
+        _smi=$(( _smi + 1 ))
     done
-    printf '%s\n' "$_count"
+    menu "$2" $3 < "$tmpfile3"
+}
+
+# A list on stdin offered as "<row> <item>". The caller maps the row back
+# through its own list, so non-contiguous numbering still picks the right one.
+numbered_menu() { # prompt, list on stdin
+    nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "$1" || true
 }
 
 # Get episode URL by number from parsed episodes
@@ -435,14 +459,18 @@ update_history() {
     # `"" !=` forces a string compare: bare `$1 != s` compares numerically when
     # both look like numbers, so removing slug 005 also removed 5. The append
     # uses "" as well so the dedup key keeps awk's string semantics.
-    awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$histfile.tmp" 2>/dev/null || true
+    # mktemp, not a fixed "$histfile.tmp": two copies running at once (two
+    # terminals) shared that name, so the second awk truncation erased the
+    # first one's new row before its mv
+    _ht="$(mktemp "$histfile.tmp.XXXXXX")" || return
+    awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$_ht" 2>/dev/null || true
     # flatten tabs/newlines in the remote title: an embedded one would forge a
     # whole extra row, and its season field reaches a jq program on read-back.
     # Done on the title alone — running the whole record through tr would eat
     # the trailing newline and break wc -l in cmd_history.
     _title="$(printf '%s' "$_title" | tr '\t\n' '  ')"
-    printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$histfile.tmp"
-    mv "$histfile.tmp" "$histfile"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$_ht"
+    mv "$_ht" "$histfile"
 }
 
 cmd_history() {
@@ -646,17 +674,14 @@ do_download() {
     # the feedback there instead.
     _yt="--no-warnings --quiet"
     if [ -n "$quiet_dl" ]; then _yt="$_yt --no-progress"; else _yt="$_yt --progress"; fi
-    # a local playlist/manifest — yt-dlp needs file:// + enable-file-urls
-    _dl_arg="$_url"; _file_flag=""
-    if [ -f "$_url" ]; then
-        _dl_arg="file://$_url"; _file_flag="--enable-file-urls"
-    fi
+    # check_stream_url above already refused anything that is not http(s), so
+    # there is no local-manifest branch here — the URL is used as-is
     if command -v yt-dlp >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            yt-dlp $_yt $_file_flag --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_dl_arg"
+            yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
             _rc=$?
         else
-            yt-dlp $_yt $_file_flag --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_dl_arg"
+            yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_file" "$_url"
             _rc=$?
         fi
         # user interrupt (Ctrl-C): stop here — no ffmpeg/curl re-download
@@ -685,9 +710,9 @@ do_download() {
         if [ "$_rc" -ne 0 ]; then
             rm -f "$_dl_file" "$_pt"
             if [ -n "$_ref" ]; then
-                yt-dlp $_yt $_file_flag --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_base.%(ext)s" "$_dl_arg"
+                yt-dlp $_yt --no-playlist --referer "$_ref" --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_base.%(ext)s" "$_url"
             else
-                yt-dlp $_yt $_file_flag --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_base.%(ext)s" "$_dl_arg"
+                yt-dlp $_yt --no-playlist --no-skip-unavailable-fragments --fragment-retries infinite -N 16 -o "$_dl_base.%(ext)s" "$_url"
             fi
             _rc=$?
             if [ "$_rc" -ge 130 ]; then warn "Interrupted."; rm -f "$_dl_base".* 2>/dev/null; return "$_rc"; fi
@@ -705,10 +730,10 @@ do_download() {
     rm -f "$_pt" "$_pt.part"
     if command -v ffmpeg >/dev/null 2>&1; then
         if [ -n "$_ref" ]; then
-            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_dl_arg" -c copy "$_pt" 2>/dev/null
+            ffmpeg -y -extension_picky 0 -loglevel error -headers "Referer: $_ref\r\n" -i "$_url" -c copy "$_pt" 2>/dev/null
             _rc=$?
         else
-            ffmpeg -y -extension_picky 0 -loglevel error -i "$_dl_arg" -c copy "$_pt" 2>/dev/null
+            ffmpeg -y -extension_picky 0 -loglevel error -i "$_url" -c copy "$_pt" 2>/dev/null
             _rc=$?
         fi
         if [ "$_rc" -ge 130 ]; then
@@ -787,10 +812,14 @@ episode_loop() {
         # --exit-after-play: stop here and propagate the player's exit code
         [ "$exit_after_play" = 1 ] && exit "$_rc"
 
-        # Auto-advance in range mode
+        # Auto-advance in range mode — to the next episode that EXISTS, not
+        # _cur_ep+1: hicine seasons are not always 1..N (0-specials, absolute
+        # numbering), so +1 could land on a number that isn't in the list. The
+        # lookup then came back empty and the loop stopped mid-range silently.
         if [ -n "$_range_end" ]; then
             if [ "$_cur_ep" -lt "$_range_end" ]; then
-                _cur_ep=$(( _cur_ep + 1 ))
+                _cur_ep="$(printf '%s\n' "$_ep_list" | awk -v n="$_cur_ep" '$1>n{print $1; exit}')"
+                [ -n "$_cur_ep" ] || break
                 continue
             else
                 unset _range_end
@@ -825,20 +854,13 @@ episode_loop() {
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
                 # offer only the qualities this season actually lists
                 _qq="$(printf "%s\n" "$_season_text" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p' | sort -u)"
-                [ -z "$_qq" ] && _qq=$(printf '480p\n720p\n1080p\n2160p')
-                _new_q=$(printf '%s\n' "$_qq" | pick_quality_menu "Quality: " || true)
+                _new_q=$(printf '%s\n' "$_qq" | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
                 _ep_total=$(printf '%s\n' "$_ep_list" | tail -1 | cut -f1)
                 ;;
             change_season)
-                printf "" > "$tmpfile3"
-                _si=1
-                while [ "$_si" -le "$_sc" ]; do
-                    printf "Season %s\n" "$_si" >> "$tmpfile3"
-                    _si=$(( _si + 1 ))
-                done
-                _spick=$(menu "Switch season: " < "$tmpfile3")
+                _spick="$(season_menu "$_sc" "Switch season: ")"
                 _sn=$(printf "%s" "$_spick" | grep -o '[0-9]*')
                 [ -z "$_sn" ] && continue
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
@@ -916,8 +938,10 @@ play_season_zip() {
             # component so it cannot traverse out of the download dir via .. or /
             _zlabel="$(printf "%s" "${_label##*/}" | sed 's/[^a-zA-Z0-9 ._-]//g')"
             do_download "$_resolved" "${_zspec}/season-${_z_sn}/${_zlabel}"
-            update_history "$_slug" "$_title" series "$_z_sn" 0
-            return 0
+            _zrc=$?
+            # only record it if it actually landed, like every other download path
+            [ "$_zrc" -eq 0 ] && update_history "$_slug" "$_title" series "$_z_sn" 0
+            return "$_zrc"
             ;;
     esac
     play_url "$_resolved" "${_title} :: ${_label}"
@@ -947,13 +971,7 @@ prompt_action() {
             esac
             _sn="${resume_season:-1}"
         else
-            printf "" > "$tmpfile3"
-            _i=1
-            while [ "$_i" -le "$_sc" ]; do
-                printf "Season %s\n" "$_i" >> "$tmpfile3"
-                _i=$(( _i + 1 ))
-            done
-            _season_pick=$(menu "Seasons for ${_title}: " < "$tmpfile3")
+            _season_pick="$(season_menu "$_sc" "Seasons for ${_title}: ")"
             [ -z "$_season_pick" ] && return 1
             _sn=$(printf "%s" "$_season_pick" | grep -o '[0-9]*')
         fi
@@ -1039,11 +1057,7 @@ prompt_action() {
     fi
 
     _parsed="$(parse_links "$_links")"
-    _best_url=$(movie_best_url "$_parsed")
-    if [ "$quality" != "best" ]; then
-        _q_match=$(movie_quality_url "$_parsed" "$quality")
-        [ -n "$_q_match" ] && _best_url="$_q_match"
-    fi
+    _best_url="$(pick_movie_url "$_parsed")"
 
     _resolved=$(resolve_stream_url "$_best_url")
     [ -z "$_resolved" ] && warn "Failed to resolve URL." && return 1
@@ -1076,11 +1090,10 @@ prompt_action() {
             replay)             _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
             change_quality)
                 _parsed="$(parse_links "$_links")"
-                _ql="$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u)"
-                [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
-                _new_q=$(printf '%s\n' "$_ql" | pick_quality_menu "Quality: " || true)
+                _new_q=$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u \
+                    | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
-                _best_url=$(movie_best_url "$_parsed")
+                _best_url="$(pick_movie_url "$_parsed")"
                 if [ "$quality" != "best" ]; then
                     _q_match=$(movie_quality_url "$_parsed" "$quality")
                     [ -n "$_q_match" ] && _best_url="$_q_match"
@@ -1298,7 +1311,13 @@ anime_pick_quality() {
 
 # play anime: resolves stream URL and reuses hicine player/history
 anime_play_episode() {
+    #   $1 = episode number, $2 = which time this number appears in the list
+    # (default 1). A split-cour anime lists 1..13 twice under different internal
+    # ids — anidb_episodes dedups the whole row, not the number — so the second
+    # "1" is a DIFFERENT episode and must not land on top of the first. The
+    # occurrence picks the season folder: S1E01, then S2E01.
     _ep_no="$1"
+    _ep_occ="${2:-1}"
     _links="$(anidb_m3u8 "$_ep_no")" || { warn "No sources found for ep $_ep_no"; return 1; }
     [ -z "$_links" ] && { warn "No sources found for ep $_ep_no"; return 1; }
     _chosen="$(anime_pick_quality "$_links")"
@@ -1310,9 +1329,8 @@ anime_play_episode() {
         # S{season}E{ep} naming — same shape the series -D flow uses, so a
         # re-run of -A -D on a partially-downloaded title skips existing files
         # and only fetches the missing episodes (gap-fill in one run).
-        do_download "$_video_link" "${_safe}/season-1/S1E${_epnum}" "$anime_embed_ref"
+        do_download "$_video_link" "${_safe}/season-${_ep_occ}/S${_ep_occ}E${_epnum}" "$anime_embed_ref"
         _rc=$?
-        [ "$_rc" -ge 130 ] && return "$_rc"
         return "$_rc"
     else
         info "Playing ep ${_ep_no}: ${anime_title}"
@@ -1367,7 +1385,7 @@ anime_play_loop() {
                 ;;
             replay)   ;;
             select)
-                _pick="$(printf "%s\n" "$anime_ep_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select episode: " || true)"
+                _pick="$(printf "%s\n" "$anime_ep_list" | numbered_menu "Select episode: ")"
                 [ -n "$_pick" ] && _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
                 ;;
             change_quality)
@@ -1415,7 +1433,7 @@ cmd_anime() {
         [ "$select_nth" -ge "$_ncount" ] 2>/dev/null && die "Selection ${select_nth} out of range (0-$((_ncount - 1)))"
         _result="$(printf "%s\n" "$anime_list" | sed -n "$((select_nth + 1))p")"
     else
-        _result="$(printf "%s\n" "$anime_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select anime: " || true)"
+        _result="$(printf "%s\n" "$anime_list" | numbered_menu "Select anime: ")"
         [ -z "$_result" ] && return 0
         _result="$(printf "%s\n" "$anime_list" | sed -n "$(printf "%s" "$_result" | awk '{print $1+0}')p")"
     fi
@@ -1446,8 +1464,7 @@ cmd_anime() {
                 _qlinks="$(anidb_m3u8 "$(printf '%s\n' "$anime_ep_list" | head -1)" 2>/dev/null)"
                 _ql="$(printf '%s\n' "$_qlinks" | sed -nE 's/^([0-9]+p)>.*/\1/p' | sort -u)"
             fi
-            [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
-            _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
+            _new_q=$(printf '%s\n' "$_ql" | pick_quality_menu "Quality to download: ")
             [ -n "$_new_q" ] && quality="$_new_q"
             printf "\n  Episode range to download (e.g. 1-50, empty = all): "
             read -r _dl_range
@@ -1474,11 +1491,14 @@ cmd_anime() {
                 *) exit 0 ;;
             esac
         fi
-        printf "%s\n" "$anime_ep_list" > "$tmpfile3"
+        # tag every row with which time its episode number appears in the list:
+        # a split-cour anime repeats 1..N, and that second run of the numbers
+        # must go to season-2/. One awk pass, not a rescan per episode.
+        printf '%s\n' "$anime_ep_list" | awk '{ n[$1]++; print $1 "\t" n[$1] }' > "$tmpfile3"
         _jobs=0
         _waitpids=""
         _done=0
-        while IFS= read -r _ep; do
+        while IFS='	' read -r _ep _occ; do
             if [ -n "$_rstart" ]; then
                 [ "$_ep" -ge "$_rstart" ] 2>/dev/null || continue
                 [ "$_ep" -le "$_rend" ] 2>/dev/null || continue
@@ -1486,7 +1506,7 @@ cmd_anime() {
             if [ "$dl_jobs" -gt 1 ]; then
                 quiet_dl=1
                 _hist_ep="$_ep"
-                ( anime_play_episode "$_ep" ) &
+                ( anime_play_episode "$_ep" "$_occ" ) &
                 _waitpids="$_waitpids $!"
                 _jobs=$(( _jobs + 1 ))
                 # wait per PID: dash's bare `wait` returns the last job's
@@ -1501,7 +1521,7 @@ cmd_anime() {
                 }
             else
                 quiet_dl=""
-                anime_play_episode "$_ep"
+                anime_play_episode "$_ep" "$_occ"
                 _rc=$?
                 [ "$_rc" -ge 130 ] && exit "$_rc"
                 [ "$_rc" -eq 0 ] && _hist_ep="$_ep"
@@ -1525,7 +1545,7 @@ cmd_anime() {
             if [ -n "$resume_ep" ]; then
                 _cur_ep="$resume_ep"
             else
-                _pick="$(printf "%s\n" "$anime_ep_list" | nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "Select episode: " || true)"
+                _pick="$(printf "%s\n" "$anime_ep_list" | numbered_menu "Select episode: ")"
                 [ -z "$_pick" ] && return 0
                 # the display line is "<row> <ep>"; map back through the list
                 # so non-contiguous numbering (0, 13, 14, ...) plays ep 14 when
@@ -1594,6 +1614,10 @@ mirror_words_regex() {
             the|a|an|of|and|in|to|for) continue ;;
         esac
         [ -n "$_mw_w" ] || continue
+        # escape the ERE metacharacters: this is user text going into grep -E,
+        # and an unbalanced "(" made grep error out, which the caller reads as
+        # "no results" — the title looked like it did not exist
+        _mw_w="$(printf '%s' "$_mw_w" | sed 's/[][\\.(){}*+?^$|]/\\&/g')"
         if [ -z "$_mw_pat" ]; then _mw_pat="$_mw_w"; else _mw_pat="$_mw_pat.*$_mw_w"; fi
     done
     printf '%s' "$_mw_pat"
@@ -1603,6 +1627,10 @@ mirror_search() { # host query -> "url<TAB>title<TAB>type" lines
     _vs_q="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
     [ -z "$_vs_q" ] && return 1
     _vs_dir="$(mktemp -d "${TMPDIR:-/tmp}/VICINE.vega.XXXXXX")" || return 1
+    # this function runs inside $( ) — a subshell whose traps the parent cannot
+    # reach — so Ctrl-C killed it before the rm -rf at the end and left the
+    # sitemaps (~5 MB per host) in /tmp for good. Clean up from in here.
+    trap 'rm -rf "$_vs_dir"' INT TERM
     # the index is parsed rather than counting files: post-sitemap counts
     # differ per host (3 to 34) and the first one is sometimes numbered
     # ("post-sitemap.xml" vs "post-sitemap1.xml")
@@ -1635,6 +1663,7 @@ mirror_search() { # host query -> "url<TAB>title<TAB>type" lines
         fi
     fi
     rm -rf "$_vs_dir" 2>/dev/null
+    trap - INT TERM
     [ -n "$_vs_hits" ] || return 1
     printf '%s\n' "$_vs_hits" | mirror_format
 }
@@ -1763,6 +1792,15 @@ cmd_mirrors() { # query
     _vg_type="$(printf '%s' "$_vg_row" | cut -f3)"
     _vg_host="$(printf '%s' "$_vg_row" | cut -f4)"
     [ -n "$_vg_url_pg" ] || return 1
+    # A mirror season page carries one "Download Now" button per episode and
+    # quality, all unlabelled — -D would resolve the first one and save it under
+    # the whole season's name. Say so instead of writing a mis-named file; the
+    # hicine and anime paths both have a real per-season loop.
+    if [ "$download_all_mode" = 1 ] && [ "$_vg_type" = "series" ]; then
+        warn "Mirror seasons have no episode labels, so -D would fetch one episode under the season name."
+        warn "Use vicine -D \"<title>\" (server-1) or vicine -A -D instead."
+        return 1
+    fi
     _vg_links="$(mirror_links "$_vg_url_pg")" || { warn "No links."; return 1; }
     [ -n "$_vg_links" ] || { warn "No links."; return 1; }
 
@@ -1966,7 +2004,16 @@ while [ $# -gt 0 ]; do
             case "$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')" in
                 "") : ;;
                 *) _zh="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
-                   _zm="$(printf '%s\n' "$MIRROR_HOSTS" | grep -iE "^${_zh}\.?" | head -1)"
+                   # literal compare, not grep -E: the word is user input, and
+                   # "vegamovies|rogmovies" matched one host and silently
+                   # dropped the rest while "*" narrowed the search on its own
+                   _zm=""
+                   for _zl in $MIRROR_HOSTS; do
+                       _zlow="$(printf '%s' "$_zl" | tr '[:upper:]' '[:lower:]')"
+                       if [ "$_zlow" = "$_zh" ] || [ "${_zlow%%.*}" = "$_zh" ]; then
+                           _zm="$_zl"; break
+                       fi
+                   done
                    if [ -n "$_zm" ]; then
                        shift; mirror_host="$_zm"
                    fi ;;
@@ -2133,16 +2180,9 @@ case "$search_mode" in
                     _qi=$(( _qi + 1 ))
                 done
                 _ql="$(printf '%s\n' "$_ql" | grep -oE '[0-9]+p' | sort -u)"
-                [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
-                _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
+                _new_q=$(printf '%s\n' "$_ql" | pick_quality_menu "Quality to download: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
-                printf "" > "$tmpfile3"
-                _si=1
-                while [ "$_si" -le "$_sc" ]; do
-                    printf "Season %s\n" "$_si" >> "$tmpfile3"
-                    _si=$(( _si + 1 ))
-                done
-                _sel=$(menu "Seasons to download (picks = those, empty = all): " "$menu_multi_flag" < "$tmpfile3")
+                _sel=$(season_menu "$_sc" "Seasons to download (picks = those, empty = all): " "$menu_multi_flag")
                 _sel_seasons=""
                 if [ -n "$_sel" ]; then
                     printf "%s\n" "$_sel" | grep -o '[0-9]*' | sort -n > "$tmpfile3"
@@ -2346,16 +2386,11 @@ case "$search_mode" in
         fi
         _parsed="$(parse_links "$_links")"
         if [ -t 0 ]; then
-            _ql="$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u)"
-            [ -z "$_ql" ] && _ql=$(printf '480p\n720p\n1080p\n2160p')
-            _new_q=$(printf 'best\n%s\n' "$_ql" | menu "Quality to download: " || true)
+            _new_q=$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u \
+                | pick_quality_menu "Quality to download: ")
             [ -n "$_new_q" ] && quality="$_new_q"
         fi
-        _best_url=$(movie_best_url "$_parsed")
-        if [ "$quality" != "best" ]; then
-            _qm=$(movie_quality_url "$_parsed" "$quality")
-            [ -n "$_qm" ] && _best_url="$_qm"
-        fi
+        _best_url="$(pick_movie_url "$_parsed")"
         _mresolved=$(resolve_stream_url "$_best_url")
         [ -z "$_mresolved" ] && die "Failed to resolve movie URL."
         _msafe="$(sanitize "$_title")"

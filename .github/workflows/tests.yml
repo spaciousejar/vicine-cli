@@ -20,8 +20,10 @@ jobs:
       # green suite, because the self-checks cover parsers and arg validation,
       # not exit-code plumbing. Info-level findings are reported but not
       # enforced: SC2086 is deliberate word-splitting and SC2059 is #38.
+      # pinned to a release SHA: @master re-resolves on every run, so whoever
+      # controls that repo decides what runs in this workflow
       - name: ShellCheck
-        uses: ludeeus/action-shellcheck@master
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # v2.0.0
         with:
           scandir: .
           severity: warning

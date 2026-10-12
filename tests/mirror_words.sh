@@ -26,4 +26,11 @@ printf '%s\n' 'https://vegamovies.gallery/download-kgf-chapter-2-2025/' \
     | grep -qiE "$(_get 'kgf chapter 2')" \
     || _fail "pattern did not match a hyphenated slug"
 
-echo "PASS (5 checks)"
+# user text goes into grep -E, so ERE metacharacters must be escaped: an
+# unbalanced "(" made grep error out and the caller read that as "no results"
+[ "$(_get 'a(b')" = 'a\(b' ] || _fail "metachar not escaped: got '$(_get 'a(b')'"
+printf '%s\n' 'https://vegamovies.gallery/a(b-season-1/' \
+    | grep -qiE "$(_get 'a(b')" \
+    || _fail "escaped pattern did not match a literal slug"
+
+echo "PASS (7 checks)"

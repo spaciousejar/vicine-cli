@@ -66,4 +66,17 @@ quality=720p
 quality=480p
 [ "$(anime_pick_quality "$LINKS")" = "1080p>https://a/1080.m3u8" ] || _fail "unmatched quality -> first line"
 
-echo "PASS (12 checks)"
+# -A -D saves to <title>/season-N/SNE##. A split-cour anime lists 1..N twice
+# under different internal ids (anidb_episodes dedups the whole row, not the
+# number), so the second run of each number is a DIFFERENT episode: with a
+# fixed season-1 it landed on the first one's file and dl_find skipped it, so
+# the whole second cour was silently never downloaded. Both halves are inline
+# in cmd_anime/anime_play_episode, so they are asserted on the source.
+grep -qF 'n[$1]++; print $1' "$SRC" \
+    || _fail "the episode list is not tagged with which run of a number it is"
+grep -qF 'anime_play_episode "$_ep" "$_occ"' "$SRC" \
+    || _fail "the -D loop does not pass the occurrence through"
+grep -qF 'season-${_ep_occ}/S${_ep_occ}E${_epnum}' "$SRC" \
+    || _fail "anime -D still writes a fixed season-1 folder"
+
+echo "PASS (15 checks)"

@@ -49,7 +49,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: bump packaged versions to ${{ github.ref_name }}"
-          file_pattern: Formula/vicine.rb bucket/vicine.json flake.nix
+          file_pattern: Formula/vicine.rb bucket/vicine.json flake.nix aur/PKGBUILD
 
       # `brew tap spaciousejar/vicine-cli` clones the separate
       # homebrew-vicine-cli repo, so the bumped formula is mirrored there.

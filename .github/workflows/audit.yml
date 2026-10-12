@@ -17,6 +17,11 @@ jobs:
   open:
     runs-on: ubuntu-latest
     steps:
+      # gh resolves the repo from the git checkout; without this the step
+      # failed with "fatal: not a git repository" and no audit issue was ever
+      # created
+      - uses: actions/checkout@v4
+
       - name: Open audit issue if none is open
         env:
           GH_TOKEN: ${{ github.token }}
