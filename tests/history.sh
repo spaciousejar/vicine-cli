@@ -4,6 +4,7 @@
 # Usage: sh tests/history.sh
 
 SCRIPT="$(dirname "$0")/../vicine"
+# shellcheck source=/dev/null
 VICINE_LIB=1 . "$SCRIPT"
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }
