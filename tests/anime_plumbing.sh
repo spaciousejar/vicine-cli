@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034  # `quality` is read by the sourced anime_pick_quality
 # Self-check for the anime provider plumbing the other suites never touched
 # (issue #53): the endpoint templates, the zoko_xor decoder and the quality
 # picker. zoko_xor and anime_pick_quality are pure; the templates are checked
@@ -6,6 +7,7 @@
 # Usage: sh tests/anime_plumbing.sh
 
 SRC="$(dirname "$0")/../vicine"
+# shellcheck source=/dev/null
 VICINE_LIB=1 . "$SRC"
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }
