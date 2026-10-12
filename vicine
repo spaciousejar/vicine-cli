@@ -553,6 +553,10 @@ play_url() {
     _ref="$3"
     check_stream_url "$_url"
     _player_pid=""   # set only when a player is backgrounded (see episode_loop wait)
+    # set up front so no branch can fall through to the tail below with it
+    # unset ("[: : integer expected"); a backgrounded launch always counts as
+    # started, a foreground one overwrites this with the player's own code
+    _pl_rc=0
     _hdr=""
     [ -n "$_ref" ] && _hdr="--http-header-fields=Referer:$_ref"
     # iina-cli drops raw mpv args placed before the URL; only --mpv-* is honored there

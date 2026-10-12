@@ -105,4 +105,32 @@ cmd_anime "no such anime here" >/dev/null 2>&1
 ( _in_chain=""; cmd_anime "no such anime here" >/dev/null 2>&1 )
 [ "$?" = 1 ] || _fail "-A should still exit 1 when anime finds nothing"
 
-echo "PASS (12 checks)"
+# --- play_url must always have a return code -------------------------------
+# _chain_played is decided from _pl_rc at the end of play_url. The detached
+# branches never set it, so the tail ran `[: : integer expected` and the flag
+# stayed unset — which is the default playback path, so every detached play
+# looked like "nothing started" and the chain reported no results.
+grep -qF '_pl_rc=0' "$SCRIPT" || _fail "play_url no longer initialises _pl_rc"
+
+# and it has to be set before the branch, not only inside some of them
+_pl_head="$(sed -n '/^play_url() {/,/case "\$player_function"/p' "$SCRIPT")"
+case "$_pl_head" in
+    *_pl_rc=0*) ;;
+    *) _fail "_pl_rc is not initialised before play_url's case" ;;
+esac
+
+# a detached launch must mark the chain as having played something
+info() { :; }
+warn() { :; }
+ok() { :; }
+player() { return 0; }
+check_stream_url() { return 0; }
+player_function=mpv; no_detach=0; exit_after_play=0; _chain_played=""
+
+# a detached launch must mark the chain as having played something. Not in a
+# subshell: play_url sets a global, and a subshell would swallow it — the same
+# mistake this test exists to prevent.
+play_url "http://x/y.m3u8" "t" "" >/dev/null 2>&1
+[ -n "$_chain_played" ] || _fail "a detached play did not set _chain_played"
+
+echo "PASS (15 checks)"

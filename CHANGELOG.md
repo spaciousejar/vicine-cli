@@ -183,6 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   part of that chain — `die` exits the whole script, so an hianime miss skipped
   the TMDB provider entirely, which is the only situation the fallback exists
   for. As the `-A` entry point it is still a hard stop.
+- `play_url` initialises its return code before branching, so the detached
+  launches — the default playback path — no longer run `[: : integer
+  expected` at the end of the function. Since the chain decides whether anything
+  started from that value, every detached play looked like a miss and the run
+  ended in "No results found" while mpv was actually playing.
 - The TMDB lookup retries. Cloudflare resets the TLS handshake on a fraction of
   requests to `api.themoviedb.org` (measured 2 of 6 succeeding), and plain
   `curl --retry` does not retry those — it only covers transient HTTP errors.
