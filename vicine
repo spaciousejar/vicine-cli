@@ -64,6 +64,24 @@ menu() {
     esac
 }
 
+# Read a picker choice into $_pick; stdin is the display list, $1 the prompt,
+# $2 extra menu flags. Returns 1 when nothing was chosen.
+# With -n set — or with no TTY, where the script defaults it to 0 — the nth
+# row is taken instead of opening a menu. Without this, a piped or cron run
+# left these pickers unable to open a menu, took the empty result as "nothing
+# picked", and exited 0 having played nothing.
+picker() {
+    _pick_list="$(cat)"
+    if [ -n "$select_nth" ]; then
+        _pick_n="$(printf '%s\n' "$_pick_list" | grep -c .)"
+        [ "$select_nth" -lt "$_pick_n" ] 2>/dev/null || die "Selection ${select_nth} out of range (0-$((_pick_n - 1)))"
+        _pick="$(printf '%s\n' "$_pick_list" | sed -n "$((select_nth + 1))p")"
+    else
+        _pick="$(printf '%s\n' "$_pick_list" | menu "$1" $2)" || true
+    fi
+    [ -n "$_pick" ]
+}
+
 # quality picker: "best" + the qualities given on stdin; prints the choice
 pick_quality_menu() {
     _pq_list="$(cat 2>/dev/null || true)"
@@ -412,10 +430,17 @@ season_menu() { # count, prompt, extra flags
     menu "$2" $3 < "$tmpfile3"
 }
 
-# A list on stdin offered as "<row> <item>". The caller maps the row back
-# through its own list, so non-contiguous numbering still picks the right one.
+# A list on stdin rendered as "<row> <item>" — the row is what the caller maps
+# back through its own list, so non-contiguous numbering still picks the right
+# one. Formatting only; offer it with picker (or numbered_menu, which adds the
+# menu itself).
+numbered() {
+    nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /'
+}
+
+# Same, but opens a menu — for pickers reached only interactively.
 numbered_menu() { # prompt, list on stdin
-    nl -w 2 | sed 's/^[[:space:]]*//' | sed 's/\t/  /' | menu "$1" || true
+    numbered | menu "$1" || true
 }
 
 # Get episode URL by number from parsed episodes
@@ -1002,8 +1027,8 @@ prompt_action() {
                     printf '%s\n' "$_ep_list" | while IFS='	' read -r _num _url _qual _size; do
                         printf "%-12s  %s  %s\n" "Ep $_num" "$_qual" "$_size" >> "$tmpfile3"
                     done
-                    _ep_pick=$(menu "Episodes (Season $_sn): " "${menu_multi_flag}" < "$tmpfile3")
-                    [ -z "$_ep_pick" ] && return 1
+                    picker "Episodes (Season $_sn): " "$menu_multi_flag" < "$tmpfile3" || return 1
+                    _ep_pick="$_pick"
                     # min/max picked as a range. fzf -m prints in SELECTION
                     # order, not sorted, so pick 5 then 2 would give
                     # first=5 last=2 and silently drop the range
@@ -1545,13 +1570,12 @@ cmd_anime() {
             if [ -n "$resume_ep" ]; then
                 _cur_ep="$resume_ep"
             else
-                _pick="$(printf "%s\n" "$anime_ep_list" | numbered_menu "Select episode: ")"
-                [ -z "$_pick" ] && return 0
+                printf '%s\n' "$anime_ep_list" | numbered > "$tmpfile3"
+                picker "Select episode: " < "$tmpfile3" || return 0
                 # the display line is "<row> <ep>"; map back through the list
                 # so non-contiguous numbering (0, 13, 14, ...) plays ep 14 when
                 # row 3 is picked, not row number 3 (issue #5)
                 _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
-                [ -n "$_cur_ep" ] || return 0
             fi
             ;;
         -1 ) _cur_ep="$(printf "%s\n" "$anime_ep_list" | tail -1)" ;;
@@ -1784,9 +1808,8 @@ cmd_mirrors() { # query
         _vg_n=$(( _vg_n + 1 ))
         printf '%d  %s  [%s]  %s\n' "$_vg_n" "$_t" "$_ty" "$_th"
     done > "$tmpfile3"
-    _vg_pick="$(menu "Select (mirrors): " < "$tmpfile3")" || true
-    [ -z "$_vg_pick" ] && return 0
-    _vg_row="$(printf '%s' "$_vg_list" | sed -n "$(printf '%s' "$_vg_pick" | awk '{print $1+0}')p")"
+    picker "Select (mirrors): " < "$tmpfile3" || return 0
+    _vg_row="$(printf '%s' "$_vg_list" | sed -n "$(printf '%s' "$_pick" | awk '{print $1+0}')p")"
     _vg_url_pg="$(printf '%s' "$_vg_row" | cut -f1)"
     _vg_title="$(printf '%s' "$_vg_row" | cut -f2)"
     _vg_type="$(printf '%s' "$_vg_row" | cut -f3)"

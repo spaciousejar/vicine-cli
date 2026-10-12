@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and it speaks the identical nexdrive → fastdl → googleusercontent chain, so it
   is a drop-in replacement. Verified end-to-end through `mirror_search` →
   `mirror_links` → `mirror_resolve`.
+- A piped or cron run now plays instead of silently doing nothing. The script
+  defaults `--select-nth` to 0 when there is no TTY, but the mirror picker and
+  the two episode pickers called the menu directly and ignored it: `fzf` failed
+  with `inappropriate ioctl for device`, the empty result was read as "user
+  cancelled", and the run **exited 0 having played nothing** — the worst outcome
+  for a scripted `-D`. All three now go through `picker()`, which takes the
+  nth row when `-n` is set, out-of-range dies with the index range instead of
+  failing silently, and `-n 0` reaches playback on all three paths.
 - `-e N-M` and the episode multi-select no longer stop early on a season with
   gaps. Range advance stepped to `_cur_ep + 1`, which lands on a number the
   season does not have (0-specials, absolute numbering); the lookup came back
