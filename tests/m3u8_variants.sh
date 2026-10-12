@@ -2,9 +2,9 @@
 # Self-check for anime_variants() — the m3u8 variant parser in vicine.
 # Usage: sh tests/m3u8_variants.sh
 #
-# The function is extracted from the real script at runtime (it's pure:
-# sed/grep/sort/printf only, no script globals), so the test can never
-# silently test a stale copy.
+# anime_variants is pure (sed/grep/sort/printf only, no script globals), and
+# the suite sources the real script (VICINE_LIB=1), so it can never silently
+# test a stale copy.
 
 VICINE_LIB=1 . "$(dirname "$0")/../vicine"
 command -v anime_variants >/dev/null 2>&1 || { echo "anime_variants missing" >&2; exit 1; }

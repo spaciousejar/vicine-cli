@@ -4,8 +4,8 @@
 # filter, and dl_find (container-agnostic existence check).
 # Usage: sh tests/download_paths.sh
 #
-# Every function is extracted from the real script at runtime, so the test
-# can never silently test a stale copy.
+# The suite sources the real script (VICINE_LIB=1), so the test can never
+# silently test a stale copy.
 
 SCRIPT="$(dirname "$0")/../vicine"
 # shellcheck source=/dev/null

@@ -1,6 +1,5 @@
 #!/bin/sh
 # Self-check for movie_best_url / movie_quality_url in vicine.
-# Both are extracted from the real script at runtime.
 # Usage: sh tests/movie_links.sh
 
 # source the real script (VICINE_LIB) rather than sed-ing functions out of it
