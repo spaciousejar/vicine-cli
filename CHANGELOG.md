@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code. `$?` referred to the `[` test, so it always exited 0 (SC2319, #39).
 - ShellCheck `warning`+ is enforced in CI, plus suites for the new download
   guards and the `-D` prefetch scheduling (#39, #53).
+- Two suites cover the last pure provider code: `tests/anime_plumbing.sh`
+  (endpoint templates, `zoko_xor`, `anime_pick_quality`) and `tests/sanitize.sh`
+  — `zoko_xor` is pinned to a known-plaintext fixture because a wrong key just
+  yields an empty `_src` rather than an error (#53).
+- Anime endpoint URLs are built with `${tmpl%"%s"}$value` instead of `printf`
+  with the template as the format. The templates are hardcoded today, so this
+  is not a live bug, but a `%` anywhere in one would become a format specifier
+  the moment it gains an env override (#38).
 
 ### Changed
 
