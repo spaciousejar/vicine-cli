@@ -29,10 +29,8 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Series support** — season/episode navigation with next/previous/replay controls
 - **Anime support** — dub/sub audio via hianime.at
 - **Automatic provider fallback** — when the primary catalogue (server-1)
-  has no result or is down, the search falls back to two film mirrors
-  (vegamovies.gallery, then rogmovies.one), then the hianime anime catalogue,
-  then a TMDB-backed source provider, so a general query exhausts the film
-  sources before the anime one
+  has no result or is down, the search falls back to the hianime anime
+  catalogue and then to a TMDB-backed source provider
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer
 > MegaPlay-based servers, which can't be resolved by the script — those show
@@ -223,10 +221,7 @@ yt-dlp's own progress bar; set `VICINE_DL_JOBS=2` (or more) for parallel
 batches — per-job bars are suppressed then and a `[####------] done/total`
 tally is shown instead. Movies keep the flat layout. An anime split into two
 cours lists its episode numbers twice, so the second run goes to
-`season-2/` rather than overwriting the first. Mirror seasons are not
-downloadable with `-D`: those pages carry one unlabelled button per episode,
-so `-z -D` says so instead of saving one episode under the season's name —
-use `-D "<title>"` or `-A -D`.
+`season-2/` rather than overwriting the first.
 
 ### Options
 

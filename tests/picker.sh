@@ -45,11 +45,11 @@ EOF
 
 # every interactive picker must route through picker(), or the -n path is
 # dead again for that flow. menu() left in a picker means it ignores -n.
-for site in 'picker "Select (mirrors): "' 'picker "Episodes (Season' 'picker "Select episode: "'; do
+for site in 'picker "Episodes (Season' 'picker "Select episode: "'; do
     grep -qF "$site" "$SCRIPT" || _fail "no call site found for: $site"
 done
-# and the mirror picker must not call menu() directly any more
-grep -qF 'menu "Select (mirrors): "' "$SCRIPT" \
-    && _fail "the mirror picker calls menu() directly again, ignoring -n"
+# and none of them may call menu() directly any more
+grep -qF 'menu "Episodes (Season' "$SCRIPT" \
+    && _fail "the episode picker calls menu() directly again, ignoring -n"
 
 echo "PASS (5 checks)"

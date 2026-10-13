@@ -4,63 +4,39 @@ For usage and install options see the [README](README.md); for contribution
 rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
 works.
 
-vicine scrapes three backends: **hicine** (movies/series), the **film mirrors**
-(`vegamovies.gallery`, then `rogmovies.one`) and **hianime** (anime). All are
-plain HTTP calls wrapped in POSIX shell — no build step, no frameworks.
+vicine scrapes three backends: **hicine** (movies/series), **hianime** (anime)
+and a **TMDB-backed source provider**. All are plain HTTP calls wrapped in
+POSIX shell — no build step, no frameworks.
 
-## Provider fallback (hicine → film mirrors → hianime)
+## Provider fallback (hicine → hianime → TMDB)
 
 Search starts on hicine (server-1). If it returns nothing or the API is
 unreachable → **status codes matter**: `select_item` returns `1` for
 "no results", `2` for "user cancelled" (cancelling must NOT trigger the
-chain). On a genuine miss `provider_chain` runs `cmd_mirrors` → `cmd_anime`,
-each tried until one returns 0 — film sources before the anime one, so a
-general query does not land on an anime-only catalogue first. `-A` forces
-anime only, `-z` forces the mirrors. `provider_chain` is the only place that
-owns this policy.
+chain). On a genuine miss `provider_chain` runs `cmd_anime`, then `cmd_videasy`
+if nothing was started. `-A` forces anime only. `provider_chain` is the only
+place that owns this policy.
 
-After anime, a last fallback runs `cmd_videasy` — the title resolves to a TMDB
-id (`tmdb_search`, which uses the official v3 API when `TMDB_API_KEY` is set and
-falls back to scraping the search page when it is not) and the id to an HLS
-source. Its catalogue is independent of hicine's and the mirrors', which is the
-point: it plays titles no mirror carries. `tmdb_pick` ranks an exact title above
-a prefix match because TMDB's own ranking puts the wrong film first for some
-queries. The chain falls through to it only when `_chain_played` is unset —
-`cmd_mirrors` and `cmd_anime` both exit 0 when they find nothing, so `||`
-alone would stop the chain at anime. `--tmdb ID` skips the lookup.
+`cmd_videasy` — the title resolves to a TMDB id (`tmdb_search`, which uses the
+official v3 API when `TMDB_API_KEY` is set and falls back to scraping the search
+page when it is not) and the id to an HLS source. Its catalogue is independent
+of hicine's, which is the point: it plays titles hicine does not carry.
+`tmdb_pick` ranks an exact title above a prefix match because TMDB's own ranking
+puts the wrong film first for some queries ("bangalore days" ranks *Bangalore
+Naatkal* first). The chain falls through to it only when `_chain_played` is
+unset — `cmd_anime` exits 0 when it finds nothing, so `||` alone would stop the
+chain there — and `cmd_anime` returns rather than `die`s while `_in_chain` is
+set, since `die` exits the script. `--tmdb ID` skips the lookup.
 
-The CDN is referer-gated, so `play_url` gets `https://www.vidking.net/` as its
-referer (the same path the anime provider already uses). Sources rotate in and
-out, so an empty `.sources` list is normal and the provider just reports it.
+Both TMDB paths need `--retry-all-errors`: Cloudflare resets the TLS handshake
+on a fraction of requests to TMDB, and plain `curl --retry` does not retry
+those. The CDN is referer-gated, so `play_url` gets `https://www.vidking.net/`
+as its referer. Sources rotate in and out, so an empty `.sources` list is
+normal and the provider just reports it.
 
 `prompt_action` splits into two: `play_season_zip` handles a season that
 arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 "nothing to play" — see `tests/season_zip.sh`, which stubs the network.
-
-`cmd_mirrors` searches every host in `MIRROR_HOSTS` and merges the results into
-one list, each row tagged with its host (field 4) — the page referer and the
-history key both need it. Each host's search is a sitemap pull
-(`mirror_sitemaps` parses the index; the post-sitemap count and naming differ
-per host), fetched 8-way parallel by `mirror_ua_fetch`, then grepped for the
-slug. Both hosts together are ~25 sitemap fetches and ~5 MB, paid only after
-hicine and hianime have both missed.
-
-`-z` skips the first two providers and goes straight to the mirrors; `-z HOST`
-restricts it to one. The host is matched against `MIRROR_HOSTS` by full name or
-first label, and an unmatched word stays part of the query rather than erroring —
-so a typo degrades to a plain mirror search rather than a confusing error.
-Matching is a literal compare, not a `grep -E` pattern: the word is user input,
-and a metacharacter used to match a host that was never named (or error out,
-which read as "no results").
-
-`cmd_mirrors` stages its sitemap pull in a `mktemp -d` and traps INT/TERM to
-remove it — it runs inside a `$( )` subshell, so the main EXIT trap cannot
-reach it and Ctrl-C used to leave ~5 MB per host in `/tmp` forever.
-
-`-D` is refused on a mirror *season* entry: those pages carry one unlabelled
-"Download Now" button per episode and quality, so a whole-season download would
-have saved a single episode under the season's name. `-d` (one file) still
-works.
 
 ## Movie/series flow (hicine)
 

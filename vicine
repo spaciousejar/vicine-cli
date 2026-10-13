@@ -104,7 +104,6 @@ ${C_WHITE}Commands:${C_RESET}
 ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-s${C_RESET}, ${C_CYAN}--search${C_RESET}            Search movies/series/anime
     ${C_CYAN}-A${C_RESET}, ${C_CYAN}--anime${C_RESET}             Search anime directly (hianime.at)
-    ${C_CYAN}-z${C_RESET}, ${C_CYAN}--mirrors${C_RESET}          Search the mirrors directly (all, or one with -z HOST)
     ${C_DIM}--dub / --sub${C_RESET}           Dub/sub audio for anime (default dub; VICINE_ANIME_MODE=sub to switch)
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}          Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
@@ -1155,16 +1154,16 @@ prompt_action() {
 # -i should not launch a full playback search on a backup.
 provider_chain() {
     if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
-        warn "No result on server-1 ($2) — trying the mirrors, then anime, then TMDB."
+        warn "No result on server-1 ($2) — trying anime, then TMDB."
         _backup_used=1
         _chain_played=""
-        # cmd_mirrors and cmd_anime both exit 0 when they come back empty-handed,
-        # so `||` alone stops the chain at anime. Fall through to the TMDB
-        # provider unless something was actually started. _in_chain also turns
-        # cmd_anime's "no results" from a die (which would exit the whole script,
-        # skipping the fallback) into a plain return.
+        # cmd_anime exits 0 when it comes back empty-handed, so `||` alone would
+        # stop the chain. Fall through to the TMDB provider unless something was
+        # actually started. _in_chain also turns cmd_anime's "no results" from a
+        # die (which would exit the whole script, skipping the fallback) into a
+        # plain return.
         _in_chain=1
-        cmd_mirrors "$1" || cmd_anime "$1"
+        cmd_anime "$1"
         _in_chain=""
         [ -n "$_chain_played" ] || cmd_videasy "$1" "$tmdb_id"
         return $?
@@ -1179,7 +1178,7 @@ cmd_search() {
     info "Searching: $_query"
     if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
         # die before the chain: an unreachable API is not the same as a miss,
-        # and -i must not turn a dead endpoint into a 15 s mirror search
+        # and -i must not turn a dead endpoint into a full fallback search
         [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
         provider_chain "$_query" "API unreachable"
         return
@@ -1632,8 +1631,8 @@ cmd_anime() {
 
 # ─── Videasy provider (a TMDB catalogue behind a public API) ─────────────────
 # The last fallback, and the only one whose catalogue is independent of both
-# hicine and the mirrors: a title resolves to a TMDB id, and the id to an HLS
-# source. It is what plays a title no mirror carries.
+# hicine: a title resolves to a TMDB id, and the id to an HLS source. It is
+# what plays a title the earlier providers do not carry.
 #
 # No API key: the id comes from TMDB's own search page. The pattern is anchored
 # on the result card (href="/movie/<id>"><h2..><span>Title) because a plain
@@ -1723,264 +1722,6 @@ cmd_videasy() {
     return "$_vy_rc"
 }
 
-# ─── Mirror providers ───────────────────────────────────────────────────────
-# Film fallbacks, tried before the anime provider: a general query should
-# exhaust the film catalogues before hitting an anime-only one. The sites'
-# own search (?s=) is dead — it redirects to a parked domain — so discovery
-# goes through the sitemap index, which is plain XML and needs no auth. Streams
-# are a 3-hop chain: title page -> nexdrive.fit -> fastdl.zip/embed?download=
-# TOKEN -> a direct googleusercontent URL.
-#
-# The sitemap pull is the expensive part: ~14 and ~8 files, fetched with 8-way
-# parallelism for ~12 s together. A Typesense/Algolia endpoint would be one
-# call each, but it is only reachable from the sites' lazy-loaded JS, not from
-# the page.
-#
-# Every entry is the same operator: the same WordPress theme, the same
-# gateway chain, the same dead client-side search. Two more siblings
-# (gokuhd.com, xprimehub.pics) were measured and dropped; see the CHANGELOG.
-MIRROR_HOSTS="vegamovies.gallery
-rogmovies.one"
-
-# the post-sitemap URLs a host's sitemap index lists
-mirror_sitemaps() { # host
-    curl -sfL --max-time 20 -A "$vicine_ua" "https://$1/sitemap.xml" 2>/dev/null \
-        | grep -oE '<loc>[^<]+</loc>' \
-        | sed 's|<loc>||; s|</loc>||' \
-        | grep -E '/post-sitemap[0-9]*\.xml$'
-}
-
-# Query -> an ALL-words regex for the sitemap fallback: "kgf chapter 2" ->
-# "kgf.*chapter.*2". Common words are dropped so they cannot widen the match
-# (an ANY-word fallback would turn "kgf chapter 2" into Attack on Titan).
-mirror_words_regex() {
-    _mw_pat=""
-    for _mw_w in $(printf '%s' "$1" | tr ' ' '\n'); do
-        case "$_mw_w" in
-            the|a|an|of|and|in|to|for) continue ;;
-        esac
-        [ -n "$_mw_w" ] || continue
-        # escape the ERE metacharacters: this is user text going into grep -E,
-        # and an unbalanced "(" made grep error out, which the caller reads as
-        # "no results" — the title looked like it did not exist
-        _mw_w="$(printf '%s' "$_mw_w" | sed 's/[][\\.(){}*+?^$|]/\\&/g')"
-        if [ -z "$_mw_pat" ]; then _mw_pat="$_mw_w"; else _mw_pat="$_mw_pat.*$_mw_w"; fi
-    done
-    printf '%s' "$_mw_pat"
-}
-
-mirror_search() { # host query -> "url<TAB>title<TAB>type" lines
-    _vs_q="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
-    [ -z "$_vs_q" ] && return 1
-    _vs_dir="$(mktemp -d "${TMPDIR:-/tmp}/VICINE.vega.XXXXXX")" || return 1
-    # this function runs inside $( ) — a subshell whose traps the parent cannot
-    # reach — so Ctrl-C killed it before the rm -rf at the end and left the
-    # sitemaps (~5 MB per host) in /tmp for good. Clean up from in here.
-    trap 'rm -rf "$_vs_dir"' INT TERM
-    # the index is parsed rather than counting files: post-sitemap counts
-    # differ per host (3 to 34) and the first one is sometimes numbered
-    # ("post-sitemap.xml" vs "post-sitemap1.xml")
-    _vs_n=0
-    mirror_sitemaps "$1" > "$_vs_dir/index"
-    while IFS= read -r _vs_u; do
-        [ -n "$_vs_u" ] || continue
-        _vs_n=$(( _vs_n + 1 ))
-        printf '%s\t%s\n' "$_vs_u" "$_vs_dir/s$_vs_n.xml"
-    done < "$_vs_dir/index" > "$_vs_dir/jobs"
-    [ -s "$_vs_dir/jobs" ] || { rm -rf "$_vs_dir"; return 1; }
-    mirror_ua_fetch "$_vs_dir/jobs"
-    # Slugs are hyphenated, so "desolation of smaug" has to be matched as
-    # "desolation-of-smaug". Try the joined form first, then an ALL-words
-    # fallback with the common words dropped — an ANY-word fallback matches
-    # "the"/"season"/"2" and turns "kgf chapter 2" into Attack on Titan.
-    _vs_all="$(grep -hoE "<loc>https://$1/[a-z0-9][a-z0-9._-]*/</loc>" "$_vs_dir"/*.xml 2>/dev/null \
-        | sed 's|<loc>||; s|</loc>||' | sort -u)"
-    _vs_hits=""
-    # printf, not "$_vs_q | tr": an unquoted expansion at the head of a pipeline
-    # is a COMMAND, so the shell would try to run the query as a program
-    _vs_joined="$(printf '%s' "$_vs_q" | tr ' ' '-' | tr -cd 'a-z0-9-')"
-    if [ -n "$_vs_joined" ]; then
-        _vs_hits="$(printf '%s\n' "$_vs_all" | grep -i -- "$_vs_joined")"
-    fi
-    if [ -z "$_vs_hits" ]; then
-        _vs_pat="$(mirror_words_regex "$_vs_q")"
-        if [ -n "$_vs_pat" ]; then
-            _vs_hits="$(printf '%s\n' "$_vs_all" | grep -iE "$_vs_pat")"
-        fi
-    fi
-    rm -rf "$_vs_dir" 2>/dev/null
-    trap - INT TERM
-    [ -n "$_vs_hits" ] || return 1
-    printf '%s\n' "$_vs_hits" | mirror_format
-}
-
-mirror_ua_fetch() { # jobs file, "url<TAB>outfile" lines
-    _vf_pids=""
-    _vf_n=0
-    while IFS='	' read -r _vf_url _vf_out; do
-        [ -n "$_vf_url" ] || continue
-        curl -sfL --max-time 25 -A "$vicine_ua" "$_vf_url" -o "$_vf_out" 2>/dev/null &
-        _vf_pids="$_vf_pids $!"
-        _vf_n=$(( _vf_n + 1 ))
-        [ "$_vf_n" -ge 8 ] && {
-            for _vf_p in $_vf_pids; do wait "$_vf_p" 2>/dev/null; done
-            _vf_pids=""; _vf_n=0
-        }
-    done < "$1"
-    for _vf_p in $_vf_pids; do wait "$_vf_p" 2>/dev/null; done
-}
-
-mirror_format() {
-    while IFS= read -r _vf_url; do
-        [ -n "$_vf_url" ] || continue
-        _vf_slug="${_vf_url%/}"; _vf_slug="${_vf_slug##*/}"
-        _vf_slug="${_vf_slug#download-}"
-        _vf_type="movie"
-        case "$_vf_slug" in
-            *season-*|*'-s0'[0-9]*) _vf_type="series" ;;
-        esac
-        _vf_title="$(printf '%s' "$_vf_slug" \
-            | sed 's|/| |g; s|_| |g; s|-| |g; s|\..*$||' \
-            | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' \
-            | awk '{
-                for (i = 1; i <= NF; i++) {
-                    w = tolower($i)
-                    if (w ~ /^(480p|720p|1080p|2160p|4k|3d|8bit|10bit|hevc|h264|h265|x264|x265|hd|webrip|webdl|web|bluray|brrip|remux|dual|multi|hindi|english|eng|org|orginal|original|dubbed|subs|sub|srt|ts|webrip|amzn|nf|hotstar|voe|10bit)$/) break
-                    out = out (out == "" ? "" : " ") w
-                }
-                print out
-            }' \
-            | sed 's/^ *//; s/ *$//')"
-        [ -n "$_vf_title" ] || _vf_title="$_vf_slug"
-        # title-case each word; awk because sed's \u/\b are GNU-only and this
-        # script also runs under dash
-        _vf_title="$(printf '%s' "$_vf_title" | awk '{
-            for (i = 1; i <= NF; i++)
-                $i = toupper(substr($i, 1, 1)) substr($i, 2)
-            print
-        }')"
-        printf '%s\t%s\t%s\n' "$_vf_url" "$_vf_title" "$_vf_type"
-    done
-}
-
-# Origin ("https://host/") of a page URL — what these fetches send as Referer.
-# ${1%%/*} cuts at the FIRST slash and yields "https:" instead.
-mirror_ref() { _mr="${1#*//}"; printf 'https://%s/' "${_mr%%/*}"; }
-
-# title page -> the nexdrive.fit gateway links (one per quality/episode).
-# Every host uses the same gateway, so this is host-agnostic.
-mirror_links() { # page url -> absolute gateway URLs
-    _vl_page="$(curl -sfL --max-time 25 -A "$vicine_ua" \
-        -e "$(mirror_ref "$1")" "$1")" || return 1
-    [ -n "$_vl_page" ] || return 1
-    printf '%s' "$_vl_page" | grep -oE 'https://[a-z0-9.-]*nexdrive\.[a-z]+/[a-z0-9]+/' | sort -u
-}
-
-# gateway -> final media URL: nexdrive -> fastdl embed -> googleusercontent.
-# The embed path varies per page (/embed?download= vs /embed.php?download=),
-# hence the optional .php.
-mirror_resolve() { # gateway url -> direct media url
-    _vr_page="$(curl -sfL --max-time 25 -A "$vicine_ua" -e "$(mirror_ref "$2")" "$1")" || return 1
-    [ -n "$_vr_page" ] || return 1
-    _vr_emb="$(printf '%s' "$_vr_page" \
-        | grep -oE 'https://[a-z0-9.-]*fastdl\.[a-z]+/embed(\.php)?\?download=[A-Za-z0-9]+' | head -1)"
-    [ -n "$_vr_emb" ] || return 1
-    _vr_e="$(curl -sfL --max-time 25 -A "$vicine_ua" -e "$1/" "$_vr_emb")" || return 1
-    [ -n "$_vr_e" ] || return 1
-    # the embed wraps the real target in a dl.php?link=<url> href. Take that
-    # value specifically — the page also carries unrelated cache/campaign
-    # links, and "first http(s) that isn't a gateway" lands on one of those.
-    printf '%s' "$_vr_e" \
-        | grep -oE 'dl\.php\?link=https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' \
-        | head -1 \
-        | sed 's|^dl\.php?link=||'
-}
-
-cmd_mirrors() { # query
-    _vg_q="$1"
-    [ -z "$_vg_q" ] && die "Missing vega query"
-    _vg_list=""
-    # every mirror is searched and the results merged, so a title that only one
-    # of them carries is still reachable. Costs ~25 sitemaps and ~5 MB when
-    # the fallthrough gets this far, hence the progress line.
-    : > "$tmpfile3.vega"
-    # -z HOST narrows to one mirror; -z alone walks all of MIRROR_HOSTS
-    if [ -n "$mirror_host" ]; then
-        printf '%s\n' "$mirror_host" > "$tmpfile4.vega"
-    else
-        printf '%s\n' "$MIRROR_HOSTS" > "$tmpfile4.vega"
-    fi
-    while IFS= read -r _vg_h; do
-        [ -n "$_vg_h" ] || continue
-        info "Searching ($_vg_h): $_vg_q"
-        _vg_r="$(mirror_search "$_vg_h" "$_vg_q")" || _vg_r=""
-        [ -n "$_vg_r" ] || continue
-        # tag each hit with the host it came from: the page referer and the
-        # history key both need it
-        printf '%s\n' "$_vg_r" | while IFS='	' read -r _u _t _ty; do
-            [ -n "$_u" ] && printf '%s\t%s\t%s\t%s\n' "$_u" "$_t" "$_ty" "$_vg_h"
-        done >> "$tmpfile3.vega"
-    done < "$tmpfile4.vega"
-    [ -s "$tmpfile3.vega" ] || { rm -f "$tmpfile3.vega" "$tmpfile4.vega"; warn "No results on the mirror sites."; return 1; }
-    _vg_list="$(cat "$tmpfile3.vega")"
-    _vg_host="$(cat "$tmpfile4.vega")"
-
-    _vg_n=0
-    printf '%s\n' "$_vg_list" | while IFS='	' read -r _s _t _ty _th; do
-        _vg_n=$(( _vg_n + 1 ))
-        printf '%d  %s  [%s]  %s\n' "$_vg_n" "$_t" "$_ty" "$_th"
-    done > "$tmpfile3"
-    picker "Select (mirrors): " < "$tmpfile3" || return 0
-    _vg_row="$(printf '%s' "$_vg_list" | sed -n "$(printf '%s' "$_pick" | awk '{print $1+0}')p")"
-    _vg_url_pg="$(printf '%s' "$_vg_row" | cut -f1)"
-    _vg_title="$(printf '%s' "$_vg_row" | cut -f2)"
-    _vg_type="$(printf '%s' "$_vg_row" | cut -f3)"
-    _vg_host="$(printf '%s' "$_vg_row" | cut -f4)"
-    [ -n "$_vg_url_pg" ] || return 1
-    # A mirror season page carries one "Download Now" button per episode and
-    # quality, all unlabelled — -D would resolve the first one and save it under
-    # the whole season's name. Say so instead of writing a mis-named file; the
-    # hicine and anime paths both have a real per-season loop.
-    if [ "$download_all_mode" = 1 ] && [ "$_vg_type" = "series" ]; then
-        warn "Mirror seasons have no episode labels, so -D would fetch one episode under the season name."
-        warn "Use vicine -D \"<title>\" (server-1) or vicine -A -D instead."
-        return 1
-    fi
-    _vg_links="$(mirror_links "$_vg_url_pg")" || { warn "No links."; return 1; }
-    [ -n "$_vg_links" ] || { warn "No links."; return 1; }
-
-    # every gateway button is labelled "Download Now" and only some of them
-    # carry a fastdl embed, so a source picker would be a menu of identical
-    # entries. Try them in order and take the first that resolves.
-    info "Resolving: $_vg_title"
-    _vg_url=""
-    printf '%s\n' "$_vg_links" > "$tmpfile3"
-    _vg_n=0
-    while IFS= read -r _vg_link; do
-        [ -n "$_vg_link" ] || continue
-        _vg_n=$(( _vg_n + 1 ))
-        [ "$_vg_n" -gt 6 ] && break
-        _vg_url="$(mirror_resolve "$_vg_link" "$_vg_url_pg")" || _vg_url=""
-        [ -n "$_vg_url" ] && break
-    done < "$tmpfile3"
-    [ -n "$_vg_url" ] || { warn "Could not resolve a stream."; return 1; }
-    # stable history key: host + slug, so the same title on two mirrors does
-    # not collide and a re-pick overwrites its own row
-    _vg_key="${_vg_host}-$(basename "$_vg_url_pg")"
-    _vg_safe="$(sanitize "$_vg_title")"
-    if [ "$player_function" = "download" ] || [ "$download_all_mode" = 1 ]; then
-        do_download "$_vg_url" "$_vg_safe"
-        _vg_rc=$?
-        [ "$_vg_rc" -eq 0 ] && update_history "vega-$_vg_key" "$_vg_title" "$_vg_type" 0 0
-        return "$_vg_rc"
-    fi
-    info "Playing: $_vg_title"
-    play_url "$_vg_url" "$_vg_title"
-    _rc=$?
-    [ "$_rc" -eq 0 ] && update_history "vega-$_vg_key" "$_vg_title" "$_vg_type" 0 0
-    return "$_rc"
-}
-
 # ─── Self-update ────────────────────────────────────────────────────────────
 
 update_script() {
@@ -2063,7 +1804,7 @@ umask 077
 
 # Config
 # Provider order: hicine (this API) is always tried first; hianime (anime) and
-# then the mirror sites are the fallbacks, via provider_chain().
+# then the TMDB provider, via provider_chain().
 API="https://api.hicine.sbs"
 # HiAnime backend (hianimes.se is a page-only mirror: its /search and /api/*
 # routes 307 to /home, so the API calls below must go to hianime.at).
@@ -2139,34 +1880,10 @@ fi
 # Parse args
 search_mode=""
 query=""
-mirror_host=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -s|--search)      search_mode="search" ;;
         -A|--anime)       search_mode="anime" ;;
-        -z|--mirrors)     search_mode="mirrors"
-            # optional host: "vicine -z" searches the mirrors, "vicine -z
-            # vegamovies" names one. Accepts the full host or its first label.
-            # Anything unrecognised stays query text, so "vicine -z dune"
-            # still searches for "dune".
-            case "$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')" in
-                "") : ;;
-                *) _zh="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
-                   # literal compare, not grep -E: the word is user input, and
-                   # "vegamovies|rogmovies" matched one host and silently
-                   # dropped the rest while "*" narrowed the search on its own
-                   _zm=""
-                   for _zl in $MIRROR_HOSTS; do
-                       _zlow="$(printf '%s' "$_zl" | tr '[:upper:]' '[:lower:]')"
-                       if [ "$_zlow" = "$_zh" ] || [ "${_zlow%%.*}" = "$_zh" ]; then
-                           _zm="$_zl"; break
-                       fi
-                   done
-                   if [ -n "$_zm" ]; then
-                       shift; mirror_host="$_zm"
-                   fi ;;
-            esac
-            ;;
         --dub)            anime_mode="dub" ;;
         --sub)            anime_mode="sub" ;;
         -t|--trending)    search_mode="trending" ;;
@@ -2196,7 +1913,7 @@ while [ $# -gt 0 ]; do
         --limit)          shift; [ -n "$1" ] || die "Missing value for --limit"; browse_limit="$1" ;;
         help)             help_info ;;
         version)          version_info ;;
-        trending|recent|browse|search|info|anime|mirrors)
+        trending|recent|browse|search|info|anime)
             # a bare command word is always a command, never query text —
             # otherwise "-i anime naruto" searched for the literal words
             search_mode="$1"
@@ -2267,13 +1984,6 @@ case "$search_mode" in
             read -r query || die "No anime search query provided."
         done
         cmd_anime "$query"
-        ;;
-    mirrors)
-        while [ -z "$query" ]; do
-            printf "\33[2K\r${C_CYAN}${C_BOLD}  Search ▸ ${C_RESET}"
-            read -r query || die "No mirror search query provided."
-        done
-        cmd_mirrors "$query"
         ;;
     trending)  cmd_trending "$query" ;;
     recent)    cmd_recent "$query" ;;

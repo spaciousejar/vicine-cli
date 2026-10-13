@@ -216,6 +216,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The film-mirror provider (`vegamovies.gallery`, `rogmovies.one`) and `-z` /
+  `--mirrors` with it — 258 lines plus the two suites that covered it. With
+  both hosts gone the chain was left crawling ~25 sitemaps (~5 MB, ~12 s) on
+  every hicine miss, only to report "No results on the mirror sites", while the
+  TMDB provider that resolves those titles sat behind it. The chain is now
+  hicine → hianime → TMDB.
 - The popmovie provider (server-2). Its TMDB/vidsrc chain is gone along with
   `VICINE_PROVIDER=popmovie` and the dead `$tmpfile5` playlist temp. The `-D`
   retry of a failed hicine movie download goes with it; the fallback chain is
