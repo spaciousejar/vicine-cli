@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A hianime soft block read as an empty search. Its challenge shell is a
+  big HTML page at HTTP 200 with no `/watch/` links, and a 403/429 page
+  likewise parsed to zero rows — both died as "No results found."
+  `anidb_search` now probes the status (403/429 named) and, after an
+  otherwise-empty parse, says "bot-challenging us — wait a bit and
+  retry." instead of claiming the show doesn't exist.
+
 - Slow hicine endpoint no longer hangs the search: `api_fetch` and
   `cmd_search`'s curl had no `--max-time`, so a stalled API sat on
   "Searching:" forever and `provider_chain` (which triggers on curl
