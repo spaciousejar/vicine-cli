@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `vicine -U` failed with a bare mktemp "Permission denied" when the
+  installed script isn't writable (e.g. a /usr/bin AUR install), after
+  spending the update fetch. It now checks writability up front and says
+  to update through the package manager instead.
+
 ## [1.7.0] - 2026-10-17
 
 ### Removed

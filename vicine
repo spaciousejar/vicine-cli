@@ -1913,6 +1913,9 @@ fi
 # ─── Self-update ────────────────────────────────────────────────────────────
 
 update_script() {
+    # refuse early and say why: a /usr/bin binary is the package manager's
+    # (AUR), and "Permission denied" on mktemp reads like a bug otherwise
+    [ -w "$0" ] || die "Cannot write $0 — update through your package manager (or re-run with sudo for script installs)."
     _repo="${VICINE_UPDATE_URL:-https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/vicine}"
     # Whatever we are about to execute has to come from the project over TLS.
     # VICINE_UPDATE_URL is otherwise an unauthenticated override, and with only
