@@ -4,35 +4,20 @@ For usage and install options see the [README](README.md); for contribution
 rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
 works.
 
-vicine scrapes three backends: **hicine** (movies/series), **hianime** (anime)
-and a **TMDB-backed source provider**. All are plain HTTP calls wrapped in
-POSIX shell — no build step, no frameworks.
+vicine scrapes two backends: **hicine** (movies/series) and **hianime**
+(anime). Both are plain HTTP calls wrapped in POSIX shell — no build step,
+no frameworks.
 
-## Provider fallback (hicine → hianime → TMDB)
+## Provider fallback (hicine → hianime)
 
 Search starts on hicine (server-1). If it returns nothing or the API is
 unreachable → **status codes matter**: `select_item` returns `1` for
 "no results", `2` for "user cancelled" (cancelling must NOT trigger the
-chain). On a genuine miss `provider_chain` runs `cmd_anime`, then `cmd_videasy`
-if nothing was started. `-A` forces anime only. `provider_chain` is the only
-place that owns this policy.
+chain). On a genuine miss `provider_chain` runs `cmd_anime`. `-A` forces
+anime only. `provider_chain` is the only place that owns this policy.
 
-`cmd_videasy` — the title resolves to a TMDB id (`tmdb_search`, which uses the
-official v3 API when `TMDB_API_KEY` is set and falls back to scraping the search
-page when it is not) and the id to an HLS source. Its catalogue is independent
-of hicine's, which is the point: it plays titles hicine does not carry.
-`tmdb_pick` ranks an exact title above a prefix match because TMDB's own ranking
-puts the wrong film first for some queries ("bangalore days" ranks *Bangalore
-Naatkal* first). The chain falls through to it only when `_chain_played` is
-unset — `cmd_anime` exits 0 when it finds nothing, so `||` alone would stop the
-chain there — and `cmd_anime` returns rather than `die`s while `_in_chain` is
-set, since `die` exits the script. `--tmdb ID` skips the lookup.
-
-Both TMDB paths need `--retry-all-errors`: Cloudflare resets the TLS handshake
-on a fraction of requests to TMDB, and plain `curl --retry` does not retry
-those. The CDN is referer-gated, so `play_url` gets `https://www.vidking.net/`
-as its referer. Sources rotate in and out, so an empty `.sources` list is
-normal and the provider just reports it.
+`cmd_anime` returns rather than `die`s while `_in_chain` is set, since
+`die` exits the script.
 
 `prompt_action` splits into two: `play_season_zip` handles a season that
 arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
@@ -51,7 +36,12 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
    URL,SIZE,QUALITY : …` line into `ep\url\qual\size` rows (last variant =
    best; `-q` picks a matching variant). `episode_loop` plays/resolves each.
 5. Movies: `parse_links` turns `URL, Link2, …, Description, Size` rows into
-   `url\tdesc\tsize`; `movie_best_url` sorts by resolution (highest = best).
+   `url\tdesc\tsize`; `movie_playable` walks the candidates — requested
+   quality first, then the rest by resolution — resolving each and
+   body-sniffing the first 32 bytes until one serves media (HTML pages at
+   200, JSON, 404 bodies are rejected like `_stage_ok` does for downloads).
+   Useless dead best-variant entries are why: sources lose files without
+   losing rows.
 6. `resolve_stream_url` resolves the workers URLs: a `vcloud=` token is
    scraped via `{base}/api/links?vcloud=…` (retried up to 5× while
    `"tokens":{}`), then `{base}/go?type=…&vcloud=…&ts=…&sig=…` redirects to
@@ -120,7 +110,7 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
   fixed name is a data race between two copies (the history file's
   `$histfile.tmp` used to be one) and a symlink-clobber target.
 - Menu/list plumbing is shared, not copy-pasted: `season_menu`,
-  `numbered_menu`, `pick_quality_menu` and `pick_movie_url`. Season data is
+  `numbered_menu`, `pick_quality_menu` and `movie_playable`. Season data is
   read once per item by `season_fields` (one `jq` call for every
   `season_N`), not twenty `jq` calls scanning 1..20.
 - Exit codes matter: `die` → 1, interrupts → 130, player exit codes pass
@@ -136,6 +126,9 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
   subshell workers, awaiting each job by PID — dash's bare `wait` returns
   the last job's status, bash/POSIX return 0, so the pids are waited
   individually to keep Ctrl-C working under every shell.
-- `-d` exits after a download (no playback menu, nothing recorded as
-  watched); `episode_loop` waits only on a PID a player genuinely
-  backgrounded.
+- `-d` downloads without the playback menu and writes a history row per
+  successful download, so it resurfaces under `-c` (dedup keeps one line
+  per title). An episode range (`-e N-M`, multi-select included) runs to
+  its end — next existing episode, keeps going past a failure — not just
+  the first file (`tests/dl_range.sh`); `episode_loop` waits only on a PID
+  a player genuinely backgrounded.

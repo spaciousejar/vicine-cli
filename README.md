@@ -30,7 +30,7 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Anime support** — dub/sub audio via hianime.at
 - **Automatic provider fallback** — when the primary catalogue (server-1)
   has no result or is down, the search falls back to the hianime anime
-  catalogue and then to a TMDB-backed source provider
+  catalogue
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer
 > MegaPlay-based servers, which can't be resolved by the script — those show
@@ -236,21 +236,12 @@ cours lists its episode numbers twice, so the second run goes to
 | `-b`, `--browse` | Browse a collection |
 | `-S`, `--stats` | Show catalogue stats |
 | `-q`, `--quality` | Select quality (`best`, `480p`, `720p`, `1080p`, `2160p`; `4K` accepted as an alias) |
-| `-e`, `--episode` | Play episode `N`, range `N-M`, or `-1` (latest); also limits `-D` downloads |
+| `-e`, `--episode` | Play episode `N`, range `N-M`, or `-1` (latest); ranges also drive `-d` and `-D` downloads |
 | `-c`, `--continue` | Continue from watch history |
 | `-C`, `--clear-history` | Clear watch history |
 | `-n`, `--select-nth` | Select result by index N (non-interactive) |
 | `-U`, `--update` | Self-update from GitHub (upgrade-only, refuses downgrades) |
 | `--uninstall` | Remove the script from disk (history is kept) |
-| `--tmdb ID` | Skip the title lookup for the TMDB fallback and use this id directly |
-
-The TMDB fallback reads an optional API key from the environment. With
-`TMDB_API_KEY` set it uses TMDB's official API; without one it falls back to
-scraping TMDB's search page, which needs no key but can be rate-limited.
-
-```sh
-export TMDB_API_KEY="your-key"   # tmdb.org -> Settings -> API
-```
 | `--exit-after-play` | Play then exit, return player exit code |
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |

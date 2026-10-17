@@ -61,9 +61,29 @@ grep -qF 'awk -v n="$_cur_ep" '"'"'$1>n{print $1; exit}'"'"'' "$SCRIPT" \
 grep -qF '_cur_ep=$(( _cur_ep + 1 ))' "$SCRIPT" \
     && _fail "episode_loop advances with +1 again, which stops a gapped season early"
 
+# -e N-M's endpoint check: each row is "ep\turl\tqual\tsize", and grep -qx
+# anchors the WHOLE line — a bare endpoint number could never match, so every
+# valid series range died with "Episode N not found." The check has to
+# narrow to the number column first.
+grep -qF '| cut -f1 | grep -qx "$_start"' "$SCRIPT" \
+    || _fail "the -e N-M endpoint check lost its cut -f1 narrow"
+grep -qF 'printf "%s\n" "$_ep_list" | grep -qx "$_start"' "$SCRIPT" \
+    && _fail "a range endpoint of -e N-M is checked against whole rows again — a tab row can never match"
+grep -qF 'Invalid episode range' "$SCRIPT" \
+    || _fail "a reversed range (-e 3-2) is no longer rejected"
+
+# and the checker pattern accepts valid endpoints of a gapped, tab-separated list
+EP=$(printf '1\ta\t480p\n3\tb\t720p\n5\tc\t1080p')
+_start=$(printf '%s' '3-5' | grep -oE '^(-1|[0-9]+)' | head -1)
+_end=$(printf '%s' '3-5' | grep -oE '(-1|[0-9]+)$' | tail -1)
+printf '%s\n' "$EP" | cut -f1 | grep -qx "$_start" \
+    || _fail "checker pattern rejected a valid range endpoint ($_start)"
+printf '%s\n' "$EP" | cut -f1 | grep -qx "$_end" \
+    || _fail "checker pattern rejected a valid range endpoint ($_end)"
+
 # season_count reads the item in ONE jq call now; a 20-call scan per check
 # made every -D start pay 20+ processes
 grep -qF 'select(.key | test("^season_[0-9]+$"))' "$SCRIPT" \
     || _fail "season_fields is gone; season_count went back to the 20-call scan"
 
-echo "PASS (17 checks)"
+echo "PASS (22 checks)"

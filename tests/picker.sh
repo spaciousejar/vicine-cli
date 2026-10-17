@@ -16,6 +16,10 @@ VICINE_LIB=1 . "$SCRIPT"
 _fail() { echo "FAIL: $1" >&2; exit 1; }
 command -v picker >/dev/null 2>&1 || { echo "picker missing from vicine" >&2; exit 1; }
 
+# picker() assigns this on success; initialised so the first failure print can
+# never reference an unset variable
+_pick=""
+
 LIST='1  alpha
 2  beta
 3  gamma'
@@ -36,12 +40,17 @@ EOF
 
 # -n out of range -> must not pick; it dies, so check it reaches the guard by
 # running it in a subshell and requiring a non-zero status
+# consumed by picker() inside the subshell below
+# shellcheck disable=SC2034
 select_nth=9
 ( picker "Pick: " <<EOF
 $LIST
 EOF
 ) >/dev/null 2>&1
-[ "$?" = "1" ] || _fail "-n out of range should exit 1, got $?"
+# capture the subshell's status first: a $? read inside the _fail message
+# would report the [ ] test's status instead (SC2319)
+_subrc=$?
+[ "$_subrc" = "1" ] || _fail "-n out of range should exit 1, got $_subrc"
 
 # every interactive picker must route through picker(), or the -n path is
 # dead again for that flow. menu() left in a picker means it ignores -n.

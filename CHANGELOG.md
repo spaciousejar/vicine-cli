@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The TMDB fallback provider. Titles that neither hicine nor hianime carry
+  no longer look themselves up on TMDB (scraped or via `TMDB_API_KEY`) nor
+  play through the videasy source API; the fallback chain is now
+  hicine → hianime only. `--tmdb ID`, `VICINE_TMDB_ID` and `TMDB_API_KEY`
+  are gone with it, and `tests/tmdb.sh` was dropped.
+
+### Fixed
+
+- Movie play no longer dies on a dead best-quality source. `pick_movie_url`
+  picked one variant blind, so -q best played Loving (2016)'s 1080p into an
+  mpv 404 while the 720p/480p buckets were alive. The play (and replay/
+  change-quality) path now walks the candidates — requested quality first,
+  then the rest by resolution — resolving and body-sniffing each until one
+  serves actual media (HTML pages at 200, JSON, and 404 page bodies are
+  rejected the way `_stage_ok` rejects them for downloads). `-D` movie
+  downloads walk the same ladder instead of failing the whole run; the
+  blind pick (`pick_movie_url`, `movie_best_url`, `movie_quality_url`) is
+  deleted. Pinned by `tests/movie_links.sh`.
+- `-d` with an episode range or multi-select (`-e 3-5`, or picking several
+  episodes in the fzf menu) downloaded only the first covered episode: the
+  download branch returned before the range auto-advance ran. It now walks
+  the range the same way the play path does — next existing episode, stops
+  at the last one, continues past a failed download — and a new
+  `tests/dl_range.sh` pins it.
+- A series episode range (`vicine -e 3-5 "show"`) died with "Episode 3 not
+  found." even though the episode existed. The endpoint check ran `grep -qx`
+  over the raw season rows (`ep\turl\tqual\tsize`), which can never match a
+  bare number; it now narrows to the episode-number column first. A reversed
+  range (`-e 3-2`) now dies loudly instead of playing from 3 to the season
+  end — the same guard the anime flow now has.
+- `-D` combined with `-t`, `-r` or `-b` silently downloaded nothing: the
+  download-all body was inline in the `download_all` case and unreachable
+  from the other entry points. It is now a shared `download_all_item()`,
+  called by search, trending, recent and browse, and returns instead of
+  exiting mid-flow.
+- `-D`'s hianime gap-retry no longer runs when a season shipped no
+  per-episode rows: a `.season_zip`-only season built one blank row, checked
+  a bogus `S1E00`, and could fire a spurious retry.
+- The test suites are shellcheck-clean at warning level again (SC2319
+  `[ $?` after a condition in `tests/picker.sh` printed the test's status,
+  not the subshell's; SC2034/SC2154 false positives are pinned inline where
+  the variables are consumed by the sourced library).
+
 ## [1.6.0] - 2026-10-13
 
 ### Security

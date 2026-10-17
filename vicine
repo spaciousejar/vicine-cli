@@ -125,7 +125,6 @@ ${C_WHITE}Options:${C_RESET}
     ${C_DIM}--rofi${C_RESET}                  Use rofi instead of fzf
     ${C_DIM}--dmenu${C_RESET}                 Use dmenu instead of fzf
     ${C_DIM}--no-detach${C_RESET}             Don't detach player
-    ${C_DIM}--tmdb ID${C_RESET}             Skip the title lookup, use this TMDB id
     ${C_DIM}--exit-after-play${C_RESET}       Play then exit, return player exit code
     ${C_DIM}--download-dir${C_RESET}          Set download directory
     ${C_DIM}--page N${C_RESET}                Browse page N (default 1)
@@ -171,7 +170,7 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile}.tmp" "${tmpfile3}.pre" "${tmpfile3}.vega" "${tmpfile4}.vega"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile}.tmp" "${tmpfile3}.pre"
     exit "$_exit_code"
 }
 
@@ -299,29 +298,37 @@ sanitize() {
     printf '%s' "$_t"
 }
 
-# Highest-resolution link from parsed "url\tdesc\tsize" lines; falls back to
-# the last line when no resolution can be parsed from the descriptions.
-movie_best_url() {
-    _mb="$(printf "%s" "$1" | awk -F'\t' 'match(tolower($2), /[0-9]+p/) { print substr($2, RSTART, RLENGTH)+0 "\t" $1 }' | sort -rn | head -1 | cut -f2-)"
-    [ -n "$_mb" ] && printf "%s" "$_mb" || printf "%s" "$1" | tail -1 | cut -f1
-}
-
-# Pick the parsed line whose description carries $2 (quality) — matched
-# against the description only, so a URL containing "720p" can't shadow a
-# 1080p line. Last match wins.
-movie_quality_url() {
-    printf "%s" "$1" | awk -F'\t' -v q="$2" 'index(tolower($2), tolower(q))' | tail -1 | cut -f1
-}
-
-# Parsed "url\tdesc\tsize" lines -> the URL to use: the highest resolution, or
-# the one whose description carries $quality when a specific one was asked for.
-pick_movie_url() {
-    _pmu="$(movie_best_url "$1")"
-    if [ "$quality" != "best" ]; then
-        _pmq="$(movie_quality_url "$1" "$quality")"
-        [ -n "$_pmq" ] && _pmu="$_pmq"
-    fi
-    printf '%s' "$_pmu"
+# Parsed "url\tdesc\tsize" lines -> resolved stream URL, walking candidates
+# until one serves actual media. Order: requested quality first, then the
+# rest by resolution (best first). A source's best variant can be a dead
+# bucket entry or an HTML page while a lesser one still plays — the blind
+# pick made -q best play a 404 (Loving 2016: 1080p dead, 720p/480p alive).
+movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
+    printf '%s\n' "$1" |
+        awk -F'\t' -v q="$quality" '
+            { r = 0
+              if (match(tolower($2), /[0-9]+p/)) r = substr($2, RSTART, RLENGTH-1)
+              m = (q != "best" && index(tolower($2), tolower(q))) ? 0 : 1
+              printf "%s\t%s\t%s\n", m, 9999 - r, $1 }' |
+        sort -n | cut -f3 |
+        while IFS= read -r _mu; do
+            [ -n "$_mu" ] || continue
+            _mr="$(resolve_stream_url "$_mu")"
+            [ -n "$_mr" ] || continue
+            # a 200 isn't enough: source pages serve HTML at 200 (pixeldrain
+            # /u/ pages do), JSON/JSONP, and text error pages count too.
+            # Body-sniff the first bytes — same reject-set _stage_ok uses —
+            # instead of trusting the status code.
+            _body="$(curl -s -r 0-31 --max-time 20 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
+            case "${_body:-}" in
+                "") warn "Source unreachable — next quality." >&2 ;;
+                \<\!doc*|\<html*|\<\?xml*|\{*|\[*)
+                    warn "Source is a page, not media — next quality." >&2 ;;
+                "access denied"*|"not found"*|"forbidden"*)
+                    warn "Source rejected the link — next quality." >&2 ;;
+                *) printf '%s' "$_mr"; exit 0 ;;
+            esac
+        done
 }
 
 # ─── Selection helpers ──────────────────────────────────────────────────────
@@ -567,7 +574,6 @@ play_url() {
                 # foreground so the player's exit code is returned
                 $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url"
                 _pl_rc=$?
-                [ "$_pl_rc" -eq 0 ] && _chain_played=1
                 return "$_pl_rc"
             fi
             if pgrep -f "IINA" >/dev/null 2>&1; then
@@ -582,7 +588,6 @@ play_url() {
             else
                 $player_function $_hdr --force-media-title="$_name" "$_url"
                 _pl_rc=$?
-                [ "$_pl_rc" -eq 0 ] && _chain_played=1
                 return "$_pl_rc"
             fi
             ;;
@@ -595,7 +600,6 @@ play_url() {
                     $player_function "$_url"
                 fi
                 _pl_rc=$?
-                [ "$_pl_rc" -eq 0 ] && _chain_played=1
                 return "$_pl_rc"
             fi
             if [ -n "$_ref" ]; then
@@ -608,9 +612,6 @@ play_url() {
             _pl_rc=0
             ;;
     esac
-    # the fallthrough providers return 0 even when they found nothing playable,
-    # so the chain needs to know for itself whether anything was started
-    [ "$_pl_rc" -eq 0 ] && _chain_played=1
 }
 
 # ─── Download ───────────────────────────────────────────────────────────────
@@ -839,11 +840,20 @@ episode_loop() {
 
         # -d/--download: do_download saved it — no menu; record a history
         # entry so downloaded titles show up under -c (dedup keeps one line)
-        [ "$player_function" = "download" ] && {
+        # -d/--download: do_download saved it — no menu, but a picked/-e range
+        # still runs to its end (a bare return truncated `-d -e 3-5` to
+        # episode 3 only)
+        if [ "$player_function" = "download" ]; then
             [ "$_rc" -ge 130 ] && exit "$_rc"
             [ "$_rc" -eq 0 ] && update_history "${_slug:-$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)}" "$_title" series "$_sn" "$_cur_ep"
+            if [ -n "$_range_end" ] && [ "$_cur_ep" -lt "$_range_end" ] 2>/dev/null; then
+                # next episode that EXISTS, not +1 — same as the play range
+                _cur_ep="$(printf '%s\n' "$_ep_list" | awk -v n="$_cur_ep" '$1>n{print $1; exit}')"
+                [ -n "$_cur_ep" ] || return "$_rc"
+                continue
+            fi
             return "$_rc"
-        }
+        fi
 
         _slug="${_slug:-$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)}"
         [ -n "$_slug" ] && update_history "$_slug" "$_title" series "$_sn" "$_cur_ep"
@@ -1061,9 +1071,14 @@ prompt_action() {
                 _start=$(printf "%s" "$requested_eps" | grep -oE '^(-1|[0-9]+)' | head -1)
                 _end=$(printf "%s" "$requested_eps" | grep -oE '(-1|[0-9]+)$' | tail -1)
                 [ "$_end" = "-1" ] && _end="$(printf "%s\n" "$_ep_list" | tail -1 | cut -f1)"
-                printf "%s\n" "$_ep_list" | grep -qx "$_start" || die "Episode $_start not found."
+                # grep -qx over the raw rows can never match — each row is
+                # "ep\turl\tqual\tsize" — so every valid -e N-M died with
+                # "Episode N not found." Narrow to the number column first.
+                printf "%s\n" "$_ep_list" | cut -f1 | grep -qx "$_start" || die "Episode $_start not found."
                 # an out-of-range end used to truncate the run silently
-                printf "%s\n" "$_ep_list" | grep -qx "$_end" || die "Episode $_end not found."
+                printf "%s\n" "$_ep_list" | cut -f1 | grep -qx "$_end" || die "Episode $_end not found."
+                # a reversed range played from _start to the season end silently
+                [ "$_start" -le "$_end" ] 2>/dev/null || die "Invalid episode range: $_start-$_end"
                 _cur_ep="$_start"
                 _range_end="$_end"
                 ;;
@@ -1096,10 +1111,8 @@ prompt_action() {
     fi
 
     _parsed="$(parse_links "$_links")"
-    _best_url="$(pick_movie_url "$_parsed")"
-
-    _resolved=$(resolve_stream_url "$_best_url")
-    [ -z "$_resolved" ] && warn "Failed to resolve URL." && return 1
+    _resolved=$(movie_playable "$_parsed")
+    [ -z "$_resolved" ] && warn "No playable source for $_title right now." && return 1
     if [ "$player_function" = "download" ]; then
         info "Downloading: $_title"
     else
@@ -1126,18 +1139,13 @@ prompt_action() {
         [ -z "$_ctrl" ] && break
 
         case "$_ctrl" in
-            replay)             _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
+            replay)             _resolved=$(movie_playable "$_parsed") && [ -n "$_resolved" ] && play_url "$_resolved" "$_title" ;;
             change_quality)
                 _parsed="$(parse_links "$_links")"
                 _new_q=$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u \
                     | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
-                _best_url="$(pick_movie_url "$_parsed")"
-                if [ "$quality" != "best" ]; then
-                    _q_match=$(movie_quality_url "$_parsed" "$quality")
-                    [ -n "$_q_match" ] && _best_url="$_q_match"
-                fi
-                _resolved=$(resolve_stream_url "$_best_url") && play_url "$_resolved" "$_title" ;;
+                _resolved=$(movie_playable "$_parsed") && [ -n "$_resolved" ] && play_url "$_resolved" "$_title" ;;
             quit)               break ;;
             *)                  break ;;
         esac
@@ -1154,18 +1162,13 @@ prompt_action() {
 # -i should not launch a full playback search on a backup.
 provider_chain() {
     if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
-        warn "No result on server-1 ($2) — trying anime, then TMDB."
+        warn "No result on server-1 ($2) — trying anime."
         _backup_used=1
-        _chain_played=""
-        # cmd_anime exits 0 when it comes back empty-handed, so `||` alone would
-        # stop the chain. Fall through to the TMDB provider unless something was
-        # actually started. _in_chain also turns cmd_anime's "no results" from a
-        # die (which would exit the whole script, skipping the fallback) into a
-        # plain return.
+        # cmd_anime exits 0 when it comes back empty-handed, so a plain `||`
+        # would look like a success. _in_chain turns cmd_anime's "no results"
+        # die (which would exit the whole script) into a plain return.
         _in_chain=1
         cmd_anime "$1"
-        _in_chain=""
-        [ -n "$_chain_played" ] || cmd_videasy "$1" "$tmdb_id"
         return $?
     fi
     return 1
@@ -1205,6 +1208,12 @@ cmd_trending() {
     info "Loading trending ${_type:-content}..."
     api_fetch "${_endpoint}${_limit}" "$tmpfile"
     select_item || return 0
+    # -D reaches every catalogue entry point: hand the picked item to the
+    # shared dody like the search/download_all case does
+    if [ "$download_all_mode" = 1 ]; then
+        download_all_item
+        return
+    fi
     [ "$info_only" -eq 1 ] && show_info
     [ "$info_only" -eq 0 ] && prompt_action
 }
@@ -1217,6 +1226,12 @@ cmd_recent() {
     info "Loading recent ${_type:-content}..."
     api_fetch "${_endpoint}${_limit}" "$tmpfile"
     select_item || return 0
+    # -D reaches every catalogue entry point: hand the picked item to the
+    # shared dody like the search/download_all case does
+    if [ "$download_all_mode" = 1 ]; then
+        download_all_item
+        return
+    fi
     [ "$info_only" -eq 1 ] && show_info
     [ "$info_only" -eq 0 ] && prompt_action
 }
@@ -1232,6 +1247,12 @@ cmd_browse() {
         mv "${tmpfile}.tmp" "$tmpfile"
     fi
     select_item || return 0
+    # -D reaches every catalogue entry point: hand the picked item to the
+    # shared dody like the search/download_all case does
+    if [ "$download_all_mode" = 1 ]; then
+        download_all_item
+        return
+    fi
     [ "$info_only" -eq 1 ] && show_info
     [ "$info_only" -eq 0 ] && prompt_action
 }
@@ -1616,6 +1637,9 @@ cmd_anime() {
                 _range_end="last"
             else
                 printf "%s\n" "$anime_ep_list" | grep -qx "$_end" || die "Episode $_end not found."
+                # a reversed range auto-advanced past _range_end and played to
+                # the end of the list silently
+                [ "$_start" -le "$_end" ] 2>/dev/null || die "Invalid episode range: $_start-$_end"
                 _range_end="$_end"
             fi
             ;;
@@ -1629,97 +1653,261 @@ cmd_anime() {
     anime_play_loop
 }
 
-# ─── Videasy provider (a TMDB catalogue behind a public API) ─────────────────
-# The last fallback, and the only one whose catalogue is independent of both
-# hicine: a title resolves to a TMDB id, and the id to an HLS source. It is
-# what plays a title the earlier providers do not carry.
-#
-# No API key: the id comes from TMDB's own search page. The pattern is anchored
-# on the result card (href="/movie/<id>"><h2..><span>Title) because a plain
-# /movie/<id> grep also matches the sidebar lists further down the page.
-VIDEASY_API="https://vidrack.created.app/api/sources/videasy"
-# the CDN is referer-gated; this is what the player and yt-dlp need to send
-VIDEASY_REF="https://www.vidking.net/"
+# The -D body once an item is selected into tmpfile2: walks a series by
+# season, narrows by -e, and downloads everything at the chosen quality, or
+# does the one-shot movie path. Shared by the search/download_all case and by
+# -t/-r/-b so download-all reaches every catalogue entry point.
+download_all_item() {
+mkdir -p "$download_dir"
 
-# Title -> "id<TAB>title" rows.
-# With TMDB_API_KEY set this is the official v3 API — no scraping, no rate-limit
-# lottery. Without one it falls back to the search page, which needs no key but
-# can be rate-limited and is tied to their markup. The key is read from the
-# environment only: a --tmdb-key flag would put it in shell history and `ps`.
-tmdb_search() {
-    if [ -n "$tmdb_api_key" ]; then
-        # --retry-all-errors, not --retry: TMDB's Cloudflare resets the TLS
-        # handshake on a fraction of requests, and plain --retry only retries
-        # transient HTTP errors, so it gave up on those. Measured 2/6 before,
-        # 8/8 after. Needs curl >= 7.71 (2022).
-        $curl_exe -sfL --max-time 20 --retry 2 --retry-all-errors --retry-delay 1 \
-            "${TMDB_API}?api_key=${tmdb_api_key}&query=$(henc "$1")" 2>/dev/null |
-            jq -r '.results[]? | "\(.id)\t\(.title)"' 2>/dev/null
-        return
-    fi
-    $curl_exe -sfL --max-time 25 --retry 2 --retry-all-errors --retry-delay 1 \
-        -A "$vicine_ua" -e "https://www.themoviedb.org/" \
-        "https://www.themoviedb.org/search/movie?query=$(henc "$1")" 2>/dev/null |
-        tr '\n' ' ' |
-        grep -oE 'href="/movie/[0-9]+"><h2[^>]*><span>[^<]+' |
-        sed 's|href="/movie/||; s|"><h2[^>]*><span>|\t|'
-}
+# Series: download every episode of every season at the chosen quality
+if is_series; then
+    _sc=$(season_count)
+    [ "$_sc" -eq 0 ] && die "No season data found."
+    _title="$(jq -r '.title' "$tmpfile2" | hdec)"
+    _safe="$(sanitize "$_title")"
 
-# The matching row: exact title first, then one that starts with the query. TMDB
-# ranks "bangalore naatkal" above "bangalore days" for that query, and playing
-# the first row unfiltered silently plays the wrong film.
-tmdb_pick() { # query, rows on stdin -> id
-    awk -F'\t' -v q="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')" '
-        { t = tolower($2); gsub(/[^a-z0-9]/, "", t)
-          if (t == q) { print $1; exit }
-          if (pf == "" && index(q, t) == 1 && length(t) > 3) pf = $1 }
-        END { if (pf != "") print pf }'
-}
-
-# Play or download a title through the videasy API.
-#   $1 = title, $2 = explicit TMDB id (skips the lookup)
-cmd_videasy() {
-    _vy_q="$1"
-    _vy_id="$2"
-    if [ -n "$_vy_id" ]; then
-        _vy_title="$_vy_q"
-    else
-        _vy_rows="$(tmdb_search "$_vy_q")"
-        if [ -z "$_vy_rows" ]; then
-            warn "No TMDB match for: $_vy_q"
-            return 1
+    # Interactive: let the user pick the quality and seasons first
+    if [ -t 0 ]; then
+        # only list qualities that actually appear in the seasons
+        _ql=""
+        _qi=1
+        while [ "$_qi" -le "$_sc" ]; do
+            _qt=$(jq -r ".season_${_qi} // empty" "$tmpfile2")
+            if [ -n "$_qt" ]; then
+                _qq="$(printf "%s\n" "$_qt" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p')"
+                _ql="$(printf '%s\n%s\n' "$_ql" "$_qq")"
+            fi
+            _qi=$(( _qi + 1 ))
+        done
+        _ql="$(printf '%s\n' "$_ql" | grep -oE '[0-9]+p' | sort -u)"
+        _new_q=$(printf '%s\n' "$_ql" | pick_quality_menu "Quality to download: ")
+        [ -n "$_new_q" ] && quality="$_new_q"
+        _sel=$(season_menu "$_sc" "Seasons to download (picks = those, empty = all): " "$menu_multi_flag")
+        _sel_seasons=""
+        if [ -n "$_sel" ]; then
+            printf "%s\n" "$_sel" | grep -o '[0-9]*' | sort -n > "$tmpfile3"
+            _sel_seasons="$(cat "$tmpfile3")"
         fi
-        _vy_id="$(printf '%s\n' "$_vy_rows" | tmdb_pick "$_vy_q")"
-        [ -n "$_vy_id" ] || _vy_id="$(printf '%s\n' "$_vy_rows" | head -1 | cut -f1)"
-        _vy_title="$(printf '%s\n' "$_vy_rows" | awk -F'\t' -v i="$_vy_id" '$1==i{print $2; exit}')"
     fi
-    info "TMDB match: ${_vy_title:-$_vy_q} ($_vy_id)"
-
-    _vy_json="$($curl_exe -sfL --max-time 25 -A "$vicine_ua" -e "$VIDEASY_REF" \
-        "${VIDEASY_API}?id=${_vy_id}&type=movie" 2>/dev/null)"
-    _vy_links="$(printf '%s' "$_vy_json" | jq -r '.sources[]? | "\(.quality // "auto")>\(.url)"' 2>/dev/null)"
-    if [ -z "$_vy_links" ]; then
-        # sources rotate in and out; an empty list is normal, not an error
-        warn "No stream source for ${_vy_title:-$_vy_q} right now (sources rotate)"
-        return 1
+    _season_selected() { [ -z "$_sel_seasons" ] && return 0; printf '%s\n' "$_sel_seasons" | grep -qx "$1"; }
+    if [ -n "$_sel_seasons" ]; then
+        _nsel=$(printf '%s\n' "$_sel_seasons" | wc -l | tr -d ' ')
+    else
+        _nsel="$_sc"
     fi
 
-    # the same ladder every other provider uses
-    _vy_ql="$(printf '%s\n' "$_vy_links" | cut -d'>' -f1 | grep -E '^[0-9]+p$' | sort -u)"
-    [ -n "$_vy_ql" ] || _vy_ql=$(printf '480p\n720p\n1080p\n2160p')
-    _vy_newq=$(printf '%s\n' "$_vy_ql" | pick_quality_menu "Quality: " || true)
-    [ -n "$_vy_newq" ] && quality="$_vy_newq"
-    _vy_url="$(anime_pick_quality "$_vy_links" | head -1 | cut -d'>' -f2-)"
-    [ -n "$_vy_url" ] || return 1
+    # Count episodes across all selected seasons using the same parser we download from
+    _total=0
+    _si=1
+    while [ "$_si" -le "$_sc" ]; do
+        _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
+        if [ -n "$_season_text" ] && _season_selected "$_si"; then
+            _ep_list=$(parse_episodes "$_season_text" "$quality")
+            _ep_list="$(eps_by_request "$_ep_list" "$requested_eps")"
+            _n=$(printf '%s\n' "$_ep_list" | grep -c . || true)
+            _total=$(( _total + _n ))
+        fi
+        _si=$(( _si + 1 ))
+    done
 
-    if [ "$player_function" = "download" ] || [ "$download_all_mode" = 1 ]; then
-        do_download "$_vy_url" "$(sanitize "${_vy_title:-$_vy_q}")" "$VIDEASY_REF"
-        return $?
+    # season/episode labels for the confirm: say WHICH season, and pluralize
+    if [ "$_nsel" -eq 1 ]; then
+        _sel_label="Season ${_sel_seasons:-1}"
+    else
+        _sel_label="$_nsel seasons"
     fi
-    play_url "$_vy_url" "${_vy_title:-$_vy_q}" "$VIDEASY_REF"
-    _vy_rc=$?
-    [ "$_vy_rc" -eq 0 ] && update_history "tmdb-$_vy_id" "${_vy_title:-$_vy_q}" movie 0 0
-    return "$_vy_rc"
+    if [ "$_total" -eq 1 ]; then _ep_label="episode"; else _ep_label="episodes"; fi
+
+    printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [Y/n] "
+    if [ -t 0 ]; then
+        read -r _yn
+        # Enter or y/Y download; anything else (n, N, junk) cancels
+        case "$_yn" in
+            ""|y|Y) : ;;
+            *) exit 0 ;;
+        esac
+    fi
+
+    _si=1
+    _done=0
+    while [ "$_si" -le "$_sc" ]; do
+        _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
+        _ep_list=""
+        [ -n "$_season_text" ] && _season_selected "$_si" && _ep_list=$(parse_episodes "$_season_text" "$quality")
+        # honor -e N / N-M / -1 inside -D (episode_loop parity); the
+        # same narrowing fed the confirm count above
+        _ep_list="$(eps_by_request "$_ep_list" "$requested_eps")"
+        if [ -n "$_ep_list" ]; then
+            # read from a file (not a pipeline) so background jobs and
+            # wait work in the current shell for parallel downloads
+            printf '%s\n' "$_ep_list" > "$tmpfile3"
+            _jobs=0
+            _waitpids=""
+            _line_no=1
+            _prefile="${tmpfile3}.pre"
+            _prepid=""
+            : > "$_prefile"
+            while IFS='	' read -r _num _url _qual _size; do
+                _enum=$(printf '%02d' "$_num")
+                if [ "$dl_jobs" -gt 1 ]; then
+                    # resolve + download in the worker so resolution
+                    # overlaps the running downloads instead of
+                    # serializing behind each batch's wait
+                    quiet_dl=1
+                    _hist_si="$_si"; _hist_ep="$_num"
+                    ( _r="$(resolve_stream_url "$_url")"
+                      if [ -z "$_r" ]; then
+                          warn "Episode $_num (S${_si}) unavailable — skipped."
+                          exit 0
+                      fi
+                      do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                    ) &
+                    _waitpids="$_waitpids $!"
+                    _jobs=$(( _jobs + 1 ))
+                    # wait on each PID individually: dash's bare `wait`
+                    # returns the last job's status, bash/POSIX return 0
+                    [ "$_jobs" -ge "$dl_jobs" ] && {
+                        _rc=0
+                        for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                        _done=$(( _done + _jobs ))
+                        _dl_progress "$_done" "$_total"
+                        _waitpids=""; _jobs=0
+                        [ "$_rc" -ge 130 ] && exit "$_rc"
+                    }
+                else
+                    quiet_dl=""
+                    # resolution stalls ~2-3 s/episode (token API +
+                    # redirect + probe); hide it by resolving the NEXT
+                    # episode's URL in the background while this one
+                    # downloads, and reading the prefetch from a file
+                    # (first episode resolves inline)
+                    if [ "$_line_no" -eq 1 ]; then
+                        _r="$(resolve_stream_url "$_url")"
+                    else
+                        # the prefetch is still resolving unless the
+                        # previous download outlasted it; reaping it
+                        # first is what stops a fast do_download (an
+                        # "Already exists" hit, a 401/403 probe failure,
+                        # a rejected error page) from reading an empty
+                        # file and cascading "unavailable" for the
+                        # rest of the season
+                        [ -n "$_prepid" ] && { wait "$_prepid"; _prepid=""; }
+                        _r="$(cat "$_prefile" 2>/dev/null)"
+                    fi
+                    _nl="$(sed -n "$((_line_no + 1))p" "$tmpfile3")"
+                    if [ -n "$_nl" ]; then
+                        _nu="$(printf '%s' "$_nl" | cut -f2)"
+                        ( _pr="$(resolve_stream_url "$_nu")"; printf '%s\n' "$_pr" > "$_prefile" ) &
+                        _prepid=$!
+                    fi
+                    _line_no=$(( _line_no + 1 ))
+                    if [ -z "$_r" ]; then
+                        warn "Episode $_num (S${_si}) unavailable — skipped."
+                        continue
+                    fi
+                    do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                    _rc=$?
+                    [ "$_rc" -ge 130 ] && exit "$_rc"
+                    [ "$_rc" -eq 0 ] && { _hist_si="$_si"; _hist_ep="$_num"; }
+                    _done=$(( _done + 1 ))
+                    _dl_progress "$_done" "$_total"
+                fi
+            done < "$tmpfile3"
+            _rc=0
+            for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+            _done=$(( _done + _jobs ))
+            _dl_progress "$_done" "$_total"
+            _waitpids=""
+            [ "$_rc" -ge 130 ] && exit "$_rc"
+        fi
+        _si=$(( _si + 1 ))
+    done
+
+    # one history line per downloaded title (-c lists it; dedup by
+    # slug == this line). Last processed episode across seasons.
+    # -D sets info_only, so prompt_action (the only other place _slug
+    # is assigned) never runs — read it here or update_history bails.
+    _slug="$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)"
+    [ -n "${_hist_ep:-}" ] && update_history "$_slug" "$_title" series "${_hist_si:-0}" "$_hist_ep"
+
+    # Anime-type hicine title (single season) with episodes still
+    # missing = their hicine links pointed at a dead bucket. Retry
+    # exactly those gaps through the hianime provider — it shares the
+    # S{sn}E{ep} naming, so they land in the same folder and nothing
+    # already downloaded is touched.
+    # an empty _ep_list (a zip-only season has no Episode rows) would
+    # build one blank row in the scan below, check a bogus S1E00 and
+    # fire a spurious hianime retry
+    if [ "$_sc" -eq 1 ] && [ -n "$_ep_list" ] && [ "$(jq -r '.contentType // ""' "$tmpfile2")" = "anime" ]; then
+        printf '%s\n' "$_ep_list" > "$tmpfile3"
+        _missing=""
+        while IFS='	' read -r _num _url _qual _size; do
+            _enum=$(printf '%02d' "$_num")
+            # dl_find, not a .mp4 test: a source that can't mux into MP4
+            # was saved as .mkv, and re-fetching it skews _total
+            dl_find "${download_dir}/${_safe}/season-1/S1E${_enum}" >/dev/null ||
+                _missing="$_missing $_num"
+        done < "$tmpfile3"
+        if [ -n "$_missing" ]; then
+            info "Retrying missing episodes via hianime:$_missing"
+            anime_list="$(anidb_search "$_title" 2>/dev/null || true)"
+            # exact title match first, else first result whose title
+            # contains ours — avoids grabbing an unrelated show
+            _amatch="$(printf '%s\n' "$anime_list" | awk -F'\t' -v t="$_title" 'tolower($2)==tolower(t){print; exit}')"
+            [ -z "$_amatch" ] && _amatch="$(printf '%s\n' "$anime_list" | awk -F'\t' -v t="$_title" 'index(tolower($2), tolower(t)){print; exit}')"
+            if [ -z "$_amatch" ]; then
+                warn "No matching title on hianime — missing episodes stay missing."
+            else
+                anime_id="$(printf '%s' "$_amatch" | cut -f 1)"
+                # keep the hicine title for the destination folder, else
+                # the retry lands in a differently-named directory and
+                # the gap never closes (anime_title drives _safe)
+                anime_title="$_title"
+                anime_ep_maps="$(anidb_episodes "$anime_id")"
+                if [ -n "$anime_ep_maps" ]; then
+                    for _ep in $_missing; do
+                        anime_play_episode "$_ep"
+                        _rc=$?
+                        [ "$_rc" -ge 130 ] && exit "$_rc"
+                    done
+                else
+                    warn "No episodes found on hianime for '$anime_title'."
+                fi
+            fi
+        fi
+    fi
+    # end of the series part — was an unconditional `exit 0` while inline
+    # in the case; a return keeps the function callable from any entry point
+    return 0
+fi
+
+# Movies: -D downloads the chosen-quality file (same pick as -d)
+_title="$(jq -r '.title' "$tmpfile2" | hdec)"
+_links=$(jq -r '.links // empty' "$tmpfile2")
+if [ -z "$_links" ]; then
+    # item-level dead entry: nothing to download and nothing to gap-retry
+    warn "No links on server-1 — nothing else to try."
+    return 0
+fi
+_parsed="$(parse_links "$_links")"
+if [ -t 0 ]; then
+    _new_q=$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u \
+        | pick_quality_menu "Quality to download: ")
+    [ -n "$_new_q" ] && quality="$_new_q"
+fi
+# same walk as the play path: a dead best variant retries at lower quality
+# instead of failing the whole -D
+_mresolved=$(movie_playable "$_parsed")
+[ -z "$_mresolved" ] && die "No playable source for $_title right now."
+_msafe="$(sanitize "$_title")"
+mkdir -p "$download_dir"
+do_download "$_mresolved" "$_msafe"
+_mrc=$?
+[ "$_mrc" -ge 130 ] && exit "$_mrc"
+if [ "$_mrc" -ne 0 ]; then
+    warn "server-1 download failed."
+fi
 }
 
 # ─── Self-update ────────────────────────────────────────────────────────────
@@ -1803,8 +1991,8 @@ uninstall_self() {
 umask 077
 
 # Config
-# Provider order: hicine (this API) is always tried first; hianime (anime) and
-# then the TMDB provider, via provider_chain().
+# Provider order: hicine (this API) is always tried first; hianime (anime)
+# is the fallback, via provider_chain().
 API="https://api.hicine.sbs"
 # HiAnime backend (hianimes.se is a page-only mirror: its /search and /api/*
 # routes 307 to /home, so the API calls below must go to hianime.at).
@@ -1831,9 +2019,6 @@ menu_program="${VICINE_MENU:-fzf}"
 menu_extra_flags="${VICINE_MENU_FLAGS:-}"
 result_limit="${VICINE_RESULT_LIMIT:-200}"
 quality="${VICINE_QUALITY:-best}"
-tmdb_id="${VICINE_TMDB_ID:-}"
-tmdb_api_key="${TMDB_API_KEY:-}"
-TMDB_API="https://api.themoviedb.org/3/search/movie"
 requested_eps=""
 select_nth="${VICINE_SELECT_NTH:-}"
 exit_after_play="${VICINE_EXIT_AFTER_PLAY:-0}"
@@ -1907,7 +2092,6 @@ while [ $# -gt 0 ]; do
         --rofi)           menu_program="rofi" ;;
         --dmenu)          menu_program="dmenu" ;;
         --no-detach)      no_detach=1 ;;
-        --tmdb)           shift; [ -n "$1" ] || die "Missing value for --tmdb"; tmdb_id="$1" ;;
         --download-dir)   shift; [ -n "$1" ] || die "Missing value for --download-dir"; download_dir="$1" ;;
         --page)           shift; [ -n "$1" ] || die "Missing value for --page"; browse_page="$1" ;;
         --limit)          shift; [ -n "$1" ] || die "Missing value for --limit"; browse_limit="$1" ;;
@@ -2008,7 +2192,7 @@ case "$search_mode" in
     download_all)
         [ -z "$query" ] && die "Missing query"
         cmd_search "$query"
-        # a fallback provider (anime/vega) finished the download-all
+        # a fallback provider (anime) finished the download-all
         # itself; its selection lives in tmpfile2 and must not re-enter the
         # hicine download flow below. tmpfile2 exists from startup (mktemp),
         # so an empty/aborted search must be detected by content (-s), not
@@ -2016,250 +2200,7 @@ case "$search_mode" in
         # with "integer expected" / "No downloadable links".
         [ "$_backup_used" = "1" ] && exit 0
         [ -s "$tmpfile2" ] || exit 0
-        mkdir -p "$download_dir"
-
-        # Series: download every episode of every season at the chosen quality
-        if is_series; then
-            _sc=$(season_count)
-            [ "$_sc" -eq 0 ] && die "No season data found."
-            _title="$(jq -r '.title' "$tmpfile2" | hdec)"
-            _safe="$(sanitize "$_title")"
-
-            # Interactive: let the user pick the quality and seasons first
-            if [ -t 0 ]; then
-                # only list qualities that actually appear in the seasons
-                _ql=""
-                _qi=1
-                while [ "$_qi" -le "$_sc" ]; do
-                    _qt=$(jq -r ".season_${_qi} // empty" "$tmpfile2")
-                    if [ -n "$_qt" ]; then
-                        _qq="$(printf "%s\n" "$_qt" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p')"
-                        _ql="$(printf '%s\n%s\n' "$_ql" "$_qq")"
-                    fi
-                    _qi=$(( _qi + 1 ))
-                done
-                _ql="$(printf '%s\n' "$_ql" | grep -oE '[0-9]+p' | sort -u)"
-                _new_q=$(printf '%s\n' "$_ql" | pick_quality_menu "Quality to download: ")
-                [ -n "$_new_q" ] && quality="$_new_q"
-                _sel=$(season_menu "$_sc" "Seasons to download (picks = those, empty = all): " "$menu_multi_flag")
-                _sel_seasons=""
-                if [ -n "$_sel" ]; then
-                    printf "%s\n" "$_sel" | grep -o '[0-9]*' | sort -n > "$tmpfile3"
-                    _sel_seasons="$(cat "$tmpfile3")"
-                fi
-            fi
-            _season_selected() { [ -z "$_sel_seasons" ] && return 0; printf '%s\n' "$_sel_seasons" | grep -qx "$1"; }
-            if [ -n "$_sel_seasons" ]; then
-                _nsel=$(printf '%s\n' "$_sel_seasons" | wc -l | tr -d ' ')
-            else
-                _nsel="$_sc"
-            fi
-
-            # Count episodes across all selected seasons using the same parser we download from
-            _total=0
-            _si=1
-            while [ "$_si" -le "$_sc" ]; do
-                _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
-                if [ -n "$_season_text" ] && _season_selected "$_si"; then
-                    _ep_list=$(parse_episodes "$_season_text" "$quality")
-                    _ep_list="$(eps_by_request "$_ep_list" "$requested_eps")"
-                    _n=$(printf '%s\n' "$_ep_list" | grep -c . || true)
-                    _total=$(( _total + _n ))
-                fi
-                _si=$(( _si + 1 ))
-            done
-
-            # season/episode labels for the confirm: say WHICH season, and pluralize
-            if [ "$_nsel" -eq 1 ]; then
-                _sel_label="Season ${_sel_seasons:-1}"
-            else
-                _sel_label="$_nsel seasons"
-            fi
-            if [ "$_total" -eq 1 ]; then _ep_label="episode"; else _ep_label="episodes"; fi
-
-            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [Y/n] "
-            if [ -t 0 ]; then
-                read -r _yn
-                # Enter or y/Y download; anything else (n, N, junk) cancels
-                case "$_yn" in
-                    ""|y|Y) : ;;
-                    *) exit 0 ;;
-                esac
-            fi
-
-            _si=1
-            _done=0
-            while [ "$_si" -le "$_sc" ]; do
-                _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
-                _ep_list=""
-                [ -n "$_season_text" ] && _season_selected "$_si" && _ep_list=$(parse_episodes "$_season_text" "$quality")
-                # honor -e N / N-M / -1 inside -D (episode_loop parity); the
-                # same narrowing fed the confirm count above
-                _ep_list="$(eps_by_request "$_ep_list" "$requested_eps")"
-                if [ -n "$_ep_list" ]; then
-                    # read from a file (not a pipeline) so background jobs and
-                    # wait work in the current shell for parallel downloads
-                    printf '%s\n' "$_ep_list" > "$tmpfile3"
-                    _jobs=0
-                    _waitpids=""
-                    _line_no=1
-                    _prefile="${tmpfile3}.pre"
-                    _prepid=""
-                    : > "$_prefile"
-                    while IFS='	' read -r _num _url _qual _size; do
-                        _enum=$(printf '%02d' "$_num")
-                        if [ "$dl_jobs" -gt 1 ]; then
-                            # resolve + download in the worker so resolution
-                            # overlaps the running downloads instead of
-                            # serializing behind each batch's wait
-                            quiet_dl=1
-                            _hist_si="$_si"; _hist_ep="$_num"
-                            ( _r="$(resolve_stream_url "$_url")"
-                              if [ -z "$_r" ]; then
-                                  warn "Episode $_num (S${_si}) unavailable — skipped."
-                                  exit 0
-                              fi
-                              do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
-                            ) &
-                            _waitpids="$_waitpids $!"
-                            _jobs=$(( _jobs + 1 ))
-                            # wait on each PID individually: dash's bare `wait`
-                            # returns the last job's status, bash/POSIX return 0
-                            [ "$_jobs" -ge "$dl_jobs" ] && {
-                                _rc=0
-                                for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
-                                _done=$(( _done + _jobs ))
-                                _dl_progress "$_done" "$_total"
-                                _waitpids=""; _jobs=0
-                                [ "$_rc" -ge 130 ] && exit "$_rc"
-                            }
-                        else
-                            quiet_dl=""
-                            # resolution stalls ~2-3 s/episode (token API +
-                            # redirect + probe); hide it by resolving the NEXT
-                            # episode's URL in the background while this one
-                            # downloads, and reading the prefetch from a file
-                            # (first episode resolves inline)
-                            if [ "$_line_no" -eq 1 ]; then
-                                _r="$(resolve_stream_url "$_url")"
-                            else
-                                # the prefetch is still resolving unless the
-                                # previous download outlasted it; reaping it
-                                # first is what stops a fast do_download (an
-                                # "Already exists" hit, a 401/403 probe failure,
-                                # a rejected error page) from reading an empty
-                                # file and cascading "unavailable" for the
-                                # rest of the season
-                                [ -n "$_prepid" ] && { wait "$_prepid"; _prepid=""; }
-                                _r="$(cat "$_prefile" 2>/dev/null)"
-                            fi
-                            _nl="$(sed -n "$((_line_no + 1))p" "$tmpfile3")"
-                            if [ -n "$_nl" ]; then
-                                _nu="$(printf '%s' "$_nl" | cut -f2)"
-                                ( _pr="$(resolve_stream_url "$_nu")"; printf '%s\n' "$_pr" > "$_prefile" ) &
-                                _prepid=$!
-                            fi
-                            _line_no=$(( _line_no + 1 ))
-                            if [ -z "$_r" ]; then
-                                warn "Episode $_num (S${_si}) unavailable — skipped."
-                                continue
-                            fi
-                            do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
-                            _rc=$?
-                            [ "$_rc" -ge 130 ] && exit "$_rc"
-                            [ "$_rc" -eq 0 ] && { _hist_si="$_si"; _hist_ep="$_num"; }
-                            _done=$(( _done + 1 ))
-                            _dl_progress "$_done" "$_total"
-                        fi
-                    done < "$tmpfile3"
-                    _rc=0
-                    for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
-                    _done=$(( _done + _jobs ))
-                    _dl_progress "$_done" "$_total"
-                    _waitpids=""
-                    [ "$_rc" -ge 130 ] && exit "$_rc"
-                fi
-                _si=$(( _si + 1 ))
-            done
-
-            # one history line per downloaded title (-c lists it; dedup by
-            # slug == this line). Last processed episode across seasons.
-            # -D sets info_only, so prompt_action (the only other place _slug
-            # is assigned) never runs — read it here or update_history bails.
-            _slug="$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)"
-            [ -n "${_hist_ep:-}" ] && update_history "$_slug" "$_title" series "${_hist_si:-0}" "$_hist_ep"
-
-            # Anime-type hicine title (single season) with episodes still
-            # missing = their hicine links pointed at a dead bucket. Retry
-            # exactly those gaps through the hianime provider — it shares the
-            # S{sn}E{ep} naming, so they land in the same folder and nothing
-            # already downloaded is touched.
-            if [ "$_sc" -eq 1 ] && [ "$(jq -r '.contentType // ""' "$tmpfile2")" = "anime" ]; then
-                printf '%s\n' "$_ep_list" > "$tmpfile3"
-                _missing=""
-                while IFS='	' read -r _num _url _qual _size; do
-                    _enum=$(printf '%02d' "$_num")
-                    # dl_find, not a .mp4 test: a source that can't mux into MP4
-                    # was saved as .mkv, and re-fetching it skews _total
-                    dl_find "${download_dir}/${_safe}/season-1/S1E${_enum}" >/dev/null ||
-                        _missing="$_missing $_num"
-                done < "$tmpfile3"
-                if [ -n "$_missing" ]; then
-                    info "Retrying missing episodes via hianime:$_missing"
-                    anime_list="$(anidb_search "$_title" 2>/dev/null || true)"
-                    # exact title match first, else first result whose title
-                    # contains ours — avoids grabbing an unrelated show
-                    _amatch="$(printf '%s\n' "$anime_list" | awk -F'\t' -v t="$_title" 'tolower($2)==tolower(t){print; exit}')"
-                    [ -z "$_amatch" ] && _amatch="$(printf '%s\n' "$anime_list" | awk -F'\t' -v t="$_title" 'index(tolower($2), tolower(t)){print; exit}')"
-                    if [ -z "$_amatch" ]; then
-                        warn "No matching title on hianime — missing episodes stay missing."
-                    else
-                        anime_id="$(printf '%s' "$_amatch" | cut -f 1)"
-                        # keep the hicine title for the destination folder, else
-                        # the retry lands in a differently-named directory and
-                        # the gap never closes (anime_title drives _safe)
-                        anime_title="$_title"
-                        anime_ep_maps="$(anidb_episodes "$anime_id")"
-                        if [ -n "$anime_ep_maps" ]; then
-                            for _ep in $_missing; do
-                                anime_play_episode "$_ep"
-                                _rc=$?
-                                [ "$_rc" -ge 130 ] && exit "$_rc"
-                            done
-                        else
-                            warn "No episodes found on hianime for '$anime_title'."
-                        fi
-                    fi
-                fi
-            fi
-            exit 0
-        fi
-
-        # Movies: -D downloads the chosen-quality file (same pick as -d)
-        _title="$(jq -r '.title' "$tmpfile2" | hdec)"
-        _links=$(jq -r '.links // empty' "$tmpfile2")
-        if [ -z "$_links" ]; then
-            # item-level dead entry: run the same backup chain as a search miss
-            warn "No links on server-1 — nothing else to try."
-            exit 0
-        fi
-        _parsed="$(parse_links "$_links")"
-        if [ -t 0 ]; then
-            _new_q=$(printf '%s\n' "$_parsed" | awk -F'\t' '{print $2}' | grep -oE '[0-9]+p' | sort -u \
-                | pick_quality_menu "Quality to download: ")
-            [ -n "$_new_q" ] && quality="$_new_q"
-        fi
-        _best_url="$(pick_movie_url "$_parsed")"
-        _mresolved=$(resolve_stream_url "$_best_url")
-        [ -z "$_mresolved" ] && die "Failed to resolve movie URL."
-        _msafe="$(sanitize "$_title")"
-        mkdir -p "$download_dir"
-        do_download "$_mresolved" "$_msafe"
-        _mrc=$?
-        [ "$_mrc" -ge 130 ] && exit "$_mrc"
-        if [ "$_mrc" -ne 0 ]; then
-            warn "server-1 download failed."
-        fi
+        download_all_item
         ;;
 esac
 

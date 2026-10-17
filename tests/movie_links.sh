@@ -1,30 +1,54 @@
 #!/bin/sh
-# Self-check for movie_best_url / movie_quality_url in vicine.
+# Self-check for movie_playable in vicine — the walk-the-candidates movie picker.
 # Usage: sh tests/movie_links.sh
 
 # source the real script (VICINE_LIB) rather than sed-ing functions out of it
 VICINE_LIB=1 . "$(dirname "$0")/../vicine"
-for fn in movie_best_url movie_quality_url; do
-    command -v "$fn" >/dev/null 2>&1 || { echo "$fn missing from vicine" >&2; exit 1; }
-done
+command -v movie_playable >/dev/null 2>&1 || { echo "movie_playable missing from vicine" >&2; exit 1; }
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }
+# quiet the walker's stderr (it warns per dead candidate)
+warn() { :; }
 
-# 1. best = highest resolution in the description, not the last line.
-out="$(movie_best_url 'https://cdn/x/720p.mp4	720p	1.0GB
-https://cdn/x/1080p.mp4	1080p	1.5GB
-https://cdn/x/2160p.mp4	2160p	3GB')"
-[ "$out" = "https://cdn/x/2160p.mp4" ] || _fail "best: expected the 2160p URL, got: $out"
+# 4. movie_playable: walks candidates (requested quality first, then best->
+#    worst resolution) and returns the FIRST one that serves media. Network
+#    stubbed: resolve_stream_url passes through, curl returns a body per URL
+#    (404 pages, source HTML pages, JSON, empty, and a real MKV header).
+# shellcheck disable=SC2034  # quality is read by the sourced movie_playable
+quality=best
+TEAM='https://b/1080.mkv	1080p Bluray	2GB
+https://b/720.mkv	720p Bluray	1GB
+https://b/480.mkv	480p	400MB'
+resolve_stream_url() { printf '%s' "$1"; }
+curl() {
+    case "$*" in
+        *1080.mkv*) printf '<!doctype html>404 not found' ;;
+        *720.mkv*)  printf '\n<!DOCTYPE html><head>' ;;   # source page at 200
+        *720p.mkv*) printf '%b' '\032E\337\243B\206\201\001' ;;
+        *480.mkv*)  printf '%b' '\032E\337\243B\206\201\001' ;;
+        *)          printf '' ;;
+    esac
+}
+out="$(movie_playable "$TEAM")"
+[ "$out" = "https://b/480.mkv" ] || _fail "dead best must fall through to live 480p; got: $out"
 
-# 2. quality matches the DESCRIPTION only — a later line whose URL contains
-#    the quality (but whose desc is higher) must not be selected.
-out2="$(movie_quality_url 'https://cdn/x/1080p.mp4	720p	1.0GB
-https://cdn/x/720p.mp4	1080p	1.5GB' 720p)"
-[ "$out2" = "https://cdn/x/1080p.mp4" ] || _fail "quality must match desc only (URL leak); got: $out2"
+# shellcheck disable=SC2034  # quality is read by the sourced movie_playable
+# 4b. requested quality wins its tier when ITS body is media
+quality=720p
+out="$(movie_playable "$TEAM")"
+[ "$out" = "https://b/480.mkv" ] || _fail "720p page must fall through; got: $out"
 
-# 3. fallback: no parseable resolution -> last line.
-out3="$(movie_best_url 'https://cdn/x/a.mp4	one	1.0GB
-https://cdn/x/b.mp4	two	2.0GB')"
-[ "$out3" = "https://cdn/x/b.mp4" ] || _fail "fallback should be the last line, got: $out3"
+TEAM2='https://b/1080b.mkv	1080p	2GB
+https://b/720p.mkv	720p	1GB'
+# 4c. quality tier: ask 720p, 720p row is real -> picked (not the 1080 row)
+# shellcheck disable=SC2034  # quality is read by the sourced movie_playable
+quality=720p
+out="$(movie_playable "$TEAM2")"
+[ "$out" = "https://b/720p.mkv" ] || _fail "quality first: got: $out"
 
-echo "PASS (3 checks)"
+# 4d. nothing alive -> empty output
+TEAM3='https://b/x.mp4	nope	1MB'
+out="$(movie_playable "$TEAM3")"
+[ -z "$out" ] || _fail "all-dead must return empty; got: $out"
+
+echo "PASS (4 checks)"
