@@ -189,7 +189,9 @@ on_sigterm() { _exit_code=143; cleanup; }
 
 api_fetch() {
     # $1 = endpoint, $2 = output file
-    $curl_exe -sf "${API}${1}" -o "$2" || die "API request failed: ${1}"
+    # bounded: provider_chain can only fire on curl FAILURE, so an unbounded
+    # request hangs the whole interactive search instead of falling through
+    $curl_exe -sf --max-time 20 "${API}${1}" -o "$2" || die "API request failed: ${1}"
 }
 
 # ─── URL resolution ─────────────────────────────────────────────────────────
@@ -1179,7 +1181,7 @@ cmd_search() {
     [ -z "$_query" ] && die "Missing search query"
     _encoded=$(henc "$_query")
     info "Searching: $_query"
-    if ! $curl_exe -sf "${API}/api/search/${_encoded}" -o "$tmpfile"; then
+    if ! $curl_exe -sf --max-time 20 "${API}/api/search/${_encoded}" -o "$tmpfile"; then
         # die before the chain: an unreachable API is not the same as a miss,
         # and -i must not turn a dead endpoint into a full fallback search
         [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
@@ -1925,7 +1927,7 @@ update_script() {
         *) die "Refusing update source outside raw.githubusercontent.com: $_repo" ;;
     esac
     info "Checking for updates..."
-    _new="$(curl -sfL "$_repo")" || die "Update failed: cannot fetch $_repo"
+    _new="$(curl -sfL --max-time 20 "$_repo")" || die "Update failed: cannot fetch $_repo"
     _new_ver="$(printf "%s" "$_new" | sed -n 's/^version_number="\([^"]*\)"/\1/p')"
     [ -z "$_new_ver" ] && die "Invalid response from update server."
 

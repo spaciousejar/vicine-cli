@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Slow hicine endpoint no longer hangs the search: `api_fetch` and
+  `cmd_search`'s curl had no `--max-time`, so a stalled API sat on
+  "Searching:" forever and `provider_chain` (which triggers on curl
+  failure) never fired. Bounded at 20s now; the fallback runs instead.
+  Same for `vicine -U`'s update fetch. Pinned by `tests/api_timeouts.sh`.
+
 - `vicine -U` failed with a bare mktemp "Permission denied" when the
   installed script isn't writable (e.g. a /usr/bin AUR install), after
   spending the update fetch. It now checks writability up front and says
