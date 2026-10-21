@@ -57,6 +57,8 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 
 1. `anidb_search`: `GET https://hianime.at/search?keyword=…`, HTML parsed
    into `anime_id\tTitle` lines via the `data-id`/`title` attributes.
+   An empty (non-block) page 1 is retried at `&page=2` once — a title
+   beyond the first page is a real miss only after that.
 2. `anidb_episodes`: `GET /api/theme/episode/list/{id}` returns JSON with an
    `.html` fragment → `ep_id\tep_no`.
 3. `anidb_m3u8`: `GET /api/theme/episode/servers?episodeId={ep_id}` → find

@@ -171,6 +171,8 @@ cleanup() {
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
     rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile}.tmp" "${tmpfile3}.pre"
+    # ours only: a concurrent copy's stage file is the mktemp'd name IT tracked
+    [ -n "${_hist_stage:-}" ] && rm -f "$_hist_stage"
     exit "$_exit_code"
 }
 
@@ -277,6 +279,15 @@ parse_episodes() {
         _size="$(printf "%s" "$_rest" | rev | cut -d',' -f2- | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         printf "%s\t%s\t%s\t%s\n" "$_ep_num" "$_url" "$_qual" "$_size"
     done
+}
+
+# Qualities a season text's Episode lines actually offer ("480p\n720p\n…",
+# unique and sorted) — the two quality menus (change_quality, -D) used to
+# carry the same five-pipe chain inline
+qualities_of() {
+    printf '%s\n' "$1" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' \
+        | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+        | grep -oE '[0-9]+p' | sort -u
 }
 
 # Decode common HTML entities in titles/headers
@@ -498,15 +509,15 @@ update_history() {
     # mktemp, not a fixed "$histfile.tmp": two copies running at once (two
     # terminals) shared that name, so the second awk truncation erased the
     # first one's new row before its mv
-    _ht="$(mktemp "$histfile.tmp.XXXXXX")" || return
-    awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$_ht" 2>/dev/null || true
+    _hist_stage="$(mktemp "$histfile.tmp.XXXXXX")" || return
+    awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$_hist_stage" 2>/dev/null || true
     # flatten tabs/newlines in the remote title: an embedded one would forge a
     # whole extra row, and its season field reaches a jq program on read-back.
     # Done on the title alone — running the whole record through tr would eat
     # the trailing newline and break wc -l in cmd_history.
     _title="$(printf '%s' "$_title" | tr '\t\n' '  ')"
-    printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$_ht"
-    mv "$_ht" "$histfile"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$_hist_stage"
+    mv "$_hist_stage" "$histfile"
 }
 
 cmd_history() {
@@ -514,8 +525,11 @@ cmd_history() {
     _count=$(wc -l < "$histfile")
     printf "" > "$tmpfile3"
     awk -F'\t' '{ printf "%d  %s", NR, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" | hdec >> "$tmpfile3"
-    _pick=$(menu "Continue (${_count}): " < "$tmpfile3")
-    [ -z "$_pick" ] && return 0
+    # picker, not a raw menu: with -n set — or no TTY, where the script
+    # defaults it to 0 — the nth row is taken instead of opening a menu. The
+    # direct menu call died on "inappropriate ioctl" in a piped run and
+    # exited 0 having resumed nothing.
+    picker "Continue (${_count}): " < "$tmpfile3" || return 0
     _idx=$(printf "%s" "$_pick" | awk '{print $1+0}')
     _entry=$(sed -n "${_idx}p" "$histfile")
     resume_season=$(printf "%s" "$_entry" | cut -f4)
@@ -580,7 +594,7 @@ play_url() {
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
-            if pgrep -f "IINA" >/dev/null 2>&1; then
+            if pgrep -x IINA >/dev/null 2>&1 || pgrep -x iina-cli >/dev/null 2>&1; then
                 nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
             else
                 nohup $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
@@ -644,6 +658,19 @@ _stage_ok() {
             return 1 ;;
     esac
     return 0
+}
+
+# Wait out a batch of background download workers. Each PID is waited on
+# individually because dash's bare `wait` returns the last job's status while
+# bash/POSIX return 0 — a Ctrl-C inside a worker would be swallowed there.
+# _drain_rc ends >=130 when any worker reported an interrupt; callers exit
+# the download run in response.
+drain_jobs() {
+    _drain_rc=0
+    for _djp in "$@"; do
+        wait "$_djp"; _dj=$?
+        [ "$_dj" -ge 130 ] && _drain_rc="$_dj"
+    done
 }
 
 # bulk -D progress: one updating line per completed episode/batch. The
@@ -906,7 +933,7 @@ episode_loop() {
             change_quality)
                 _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
                 # offer only the qualities this season actually lists
-                _qq="$(printf "%s\n" "$_season_text" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p' | sort -u)"
+                _qq="$(qualities_of "$_season_text")"
                 _new_q=$(printf '%s\n' "$_qq" | pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 _ep_list=$(parse_episodes "$_season_text" "$quality")
@@ -1204,16 +1231,12 @@ cmd_search() {
     [ "$info_only" -eq 0 ] && prompt_action
 }
 
-cmd_trending() {
-    _type="${1:-}"
-    _limit="?limit=${result_limit}"
-    _endpoint="/api/trending"
-    [ -n "$_type" ] && _endpoint="/api/trending/${_type}"
-    info "Loading trending ${_type:-content}..."
-    api_fetch "${_endpoint}${_limit}" "$tmpfile"
+# -t/-r share one handler: the endpoints differ only in the API root; the
+# picked item must reach the same downstream as a search (info/-D/prompt)
+cmd_catalog() { # $1 = API root, $2 = sub-type, $3 = display label
+    info "Loading ${3}..."
+    api_fetch "${1}${2:+/${2}}?limit=${result_limit}" "$tmpfile"
     select_item || return 0
-    # -D reaches every catalogue entry point: hand the picked item to the
-    # shared dody like the search/download_all case does
     if [ "$download_all_mode" = 1 ]; then
         download_all_item
         return
@@ -1222,23 +1245,8 @@ cmd_trending() {
     [ "$info_only" -eq 0 ] && prompt_action
 }
 
-cmd_recent() {
-    _type="${1:-}"
-    _limit="?limit=${result_limit}"
-    _endpoint="/api/recent"
-    [ -n "$_type" ] && _endpoint="/api/recent/${_type}"
-    info "Loading recent ${_type:-content}..."
-    api_fetch "${_endpoint}${_limit}" "$tmpfile"
-    select_item || return 0
-    # -D reaches every catalogue entry point: hand the picked item to the
-    # shared dody like the search/download_all case does
-    if [ "$download_all_mode" = 1 ]; then
-        download_all_item
-        return
-    fi
-    [ "$info_only" -eq 1 ] && show_info
-    [ "$info_only" -eq 0 ] && prompt_action
-}
+cmd_trending() { cmd_catalog "/api/trending" "${1:-}" "trending ${1:-content}"; }
+cmd_recent() { cmd_catalog "/api/recent" "${1:-}" "recent ${1:-content}"; }
 
 cmd_browse() {
     _collection="$1"
@@ -1278,16 +1286,22 @@ anidb_curl() {
 # search → lines "anime_id<TAB>title"
 # name the bot-block: a challenge/429 body parses as zero rows and read
 # "No results found." — say rate-limit instead when hianime served one.
+# Page 1 first; when it parses empty without being a block, page 2 is tried
+# too — a title beyond the first page used to read as a false "no results".
 anidb_search() {
     _q=$(henc "$1")
-    _page="$(anidb_curl -w '\n%{http_code}' "${anime_search_api%"%s"}$_q")"
-    _code="$(printf '%s' "$_page" | tail -1)"
-    _page="$(printf '%s' "$_page" | sed '$d')"
-    case "$_code" in
-        403|429) die "hianime is rate-limiting this IP (HTTP ${_code}) — wait a bit and retry." ;;
-    esac
-    _page="$(printf '%s' "$_page" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
-    _rows="$(printf "%s" "$_page" | sed -nE 's|.*href="[^"]*/watch/[^"]+"[^>]*title="([^"]*)"[^>]*data-id="([0-9]+)".*|\2\t\1|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g')"
+    _rows=""
+    for _pgi in 1 2; do
+        _page="$(anidb_curl -w '\n%{http_code}' "${anime_search_api%"%s"}$_q&page=${_pgi}")"
+        _code="$(printf '%s' "$_page" | tail -1)"
+        _page="$(printf '%s' "$_page" | sed '$d')"
+        case "$_code" in
+            403|429) die "hianime is rate-limiting this IP (HTTP ${_code}) — wait a bit and retry." ;;
+        esac
+        _page="$(printf '%s' "$_page" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
+        _rows="$(printf "%s" "$_page" | sed -nE 's|.*href="[^"]*/watch/[^"]+"[^>]*title="([^"]*)"[^>]*data-id="([0-9]+)".*|\2\t\1|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g')"
+        [ -n "$_rows" ] && break
+    done
     [ -n "$_rows" ] || {
         # a 200 challenge shell is big HTML with no /watch/ links and reads
         # like a vacuous "no results" if left unnamed
@@ -1602,15 +1616,14 @@ cmd_anime() {
                 ( anime_play_episode "$_ep" "$_occ" ) &
                 _waitpids="$_waitpids $!"
                 _jobs=$(( _jobs + 1 ))
-                # wait per PID: dash's bare `wait` returns the last job's
-                # status, bash/POSIX return 0 (Ctrl-C would be swallowed there)
+                # drain_jobs waits per PID: a bare `wait` loses every status
+                # except the last job's, so a Ctrl-C would be swallowed there
                 [ "$_jobs" -ge "$dl_jobs" ] && {
-                    _rc=0
-                    for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                    drain_jobs $_waitpids
                     _done=$(( _done + _jobs ))
                     _dl_progress "$_done" "$_total"
                     _waitpids=""; _jobs=0
-                    [ "$_rc" -ge 130 ] && exit "$_rc"
+                    [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
                 }
             else
                 quiet_dl=""
@@ -1622,12 +1635,11 @@ cmd_anime() {
                 _dl_progress "$_done" "$_total"
             fi
         done < "$tmpfile3"
-        _rc=0
-        for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+        drain_jobs $_waitpids
         _done=$(( _done + _jobs ))
         _dl_progress "$_done" "$_total"
         _waitpids=""
-        [ "$_rc" -ge 130 ] && exit "$_rc"
+        [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
         [ -n "${_hist_ep:-}" ] && update_history "$anime_id" "$anime_title" anime 0 "$_hist_ep"
         return
     fi
@@ -1694,7 +1706,7 @@ if is_series; then
         while [ "$_qi" -le "$_sc" ]; do
             _qt=$(jq -r ".season_${_qi} // empty" "$tmpfile2")
             if [ -n "$_qt" ]; then
-                _qq="$(printf "%s\n" "$_qt" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -oE '[0-9]+p')"
+                _qq="$(qualities_of "$_qt")"
                 _ql="$(printf '%s\n%s\n' "$_ql" "$_qq")"
             fi
             _qi=$(( _qi + 1 ))
@@ -1784,15 +1796,14 @@ if is_series; then
                     ) &
                     _waitpids="$_waitpids $!"
                     _jobs=$(( _jobs + 1 ))
-                    # wait on each PID individually: dash's bare `wait`
-                    # returns the last job's status, bash/POSIX return 0
+                    # drain_jobs waits on each PID individually (a bare
+                    # `wait` loses all but the last job's status)
                     [ "$_jobs" -ge "$dl_jobs" ] && {
-                        _rc=0
-                        for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+                        drain_jobs $_waitpids
                         _done=$(( _done + _jobs ))
                         _dl_progress "$_done" "$_total"
                         _waitpids=""; _jobs=0
-                        [ "$_rc" -ge 130 ] && exit "$_rc"
+                        [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
                     }
                 else
                     quiet_dl=""
@@ -1833,12 +1844,11 @@ if is_series; then
                     _dl_progress "$_done" "$_total"
                 fi
             done < "$tmpfile3"
-            _rc=0
-            for _wp in $_waitpids; do wait "$_wp"; _wr=$?; [ "$_wr" -ge 130 ] && _rc="$_wr"; done
+            drain_jobs $_waitpids
             _done=$(( _done + _jobs ))
             _dl_progress "$_done" "$_total"
             _waitpids=""
-            [ "$_rc" -ge 130 ] && exit "$_rc"
+            [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
         fi
         _si=$(( _si + 1 ))
     done
@@ -2136,6 +2146,13 @@ case "$select_nth" in
     "") : ;;
     *[!0-9]*) die "--select-nth must be a non-negative integer" ;;
 esac
+
+# numeric env/flag values: dl_jobs drives the -gt batch tests (a bad test
+# would print "integer expression expected" per row and silently run serial),
+# page/limit go straight into the browse URL
+case "$dl_jobs" in ""|*[!0-9]*) die "VICINE_DL_JOBS must be a number" ;; esac
+case "$browse_page" in ""|*[!0-9]*) die "--page must be a number" ;; esac
+case "$browse_limit" in ""|*[!0-9]*) die "--limit must be a number" ;; esac
 
 # multi-select flag per menu program — computed once; menu_program does not
 # change after arg parsing. dmenu has no multi-select and gets nothing.

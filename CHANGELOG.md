@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `VICINE_DL_JOBS`, `--page` and `--limit` weren't validated. A bad
+  `VICINE_DL_JOBS` printed "integer expression expected" per queued
+  episode and silently degraded `-D` to serial runs, and `--page`/
+  `--limit` went straight into the browse URL unchecked. All three are
+  checked at startup now; non-numeric values die with the flag named.
+
+- `vicine -c` bypassed `picker` and called the fzf menu directly, so a
+  piped or `-n`-driven run died on "inappropriate ioctl" and exited 0
+  having resumed nothing. It now goes through `picker` like every other
+  list: non-interactive runs auto-pick the listed entry instead of
+  failing silently.
+
+- A title living beyond hianime's first search page read as "No results
+  found." An empty page-1 parse that isn't a soft block is now retried
+  once at `&page=2` (`anidb_search`).
+
+- The IINA fastpath used `pgrep -f "IINA"`, which matches any command
+  line containing that string (a video literally named *IINA-something*
+  playing in mpv, for one). It matches the real player processes now
+  (`pgrep -x IINA` or `pgrep -x iina-cli`).
+
+- A mid-write kill between the history stage file's mktemp and its final
+  `mv` left `history.tmp.*` litter forever. The stage file is now
+  tracked (`_hist_stage`) and removed by `cleanup` on exit — ours only,
+  so a concurrently running copy's stage file is never touched.
+
+### Changed
+
+- `-t`/`-r` share one `cmd_catalog` body — they differed only in the API
+  root; the picked item reaches the same info/`-D`/prompt downstream.
+- The season-quality extraction chain is a shared `qualities_of` helper
+  (was the same five-pipe sed chain inlined twice).
+- The four parallel-drain blocks are one `drain_jobs` helper. The
+  interrupt contract (per-PID wait, `_drain_rc` ≥ 130 recorded) is
+  pinned by `tests/drain.sh`; `update_script`'s replace-or-refuse
+  contract is pinned by `tests/self_update.sh` (8 checks).
+
 ## [1.7.1] - 2026-10-21
 
 ### Fixed
