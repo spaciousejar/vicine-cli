@@ -30,7 +30,7 @@ jobs:
           additional_files: install.sh
 
   self-checks:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -38,11 +38,19 @@ jobs:
         # differently — cf. the bare-`wait` interrupt bug — so every suite
         # runs under each shell explicitly.
         shell: [sh, dash, bash]
+        # macOS as well: its userland is BSD (sed, cut, awk, mktemp), and the
+        # `rev`-on-macOS breakage sat unnoticed for months because CI was
+        # Linux-only. macOS ships no dash, and its sh and bash are 3.2 — the
+        # oldest shell the suite ever runs under, which is the point.
+        os: [ubuntu-latest, macos-latest]
+        exclude:
+          - os: macos-latest
+            shell: dash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Syntax (${{ matrix.shell }})
+      - name: Syntax (${{ matrix.os }} ${{ matrix.shell }})
         run: ${{ matrix.shell }} -n vicine
 
       - name: Self-checks under ${{ matrix.shell }}
