@@ -47,7 +47,10 @@ jobs:
           cp -r "$GITHUB_WORKSPACE/debian" "vicine-${ver}/"
           chmod +x "vicine-${ver}/vicine"
           cd "vicine-${ver}"
-          dch --create -v "$ver-1" --package vicine -D unstable --force-distribution "Release $ver"
+          # Launchpad takes only real Ubuntu codenames for PPAs — Distribution:
+          # "unstable" is silently rejected after a green dput (workflow stayed
+          # green while nothing was ever published)
+          dch --create -v "$ver-1" --package vicine -D resolute --force-distribution "Release $ver"
           dpkg-buildpackage -S -sa -d
 
       - name: Import GPG key and sign
