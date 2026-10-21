@@ -357,8 +357,10 @@ select_item() {
         return 0
     fi
 
-    # Build display list (1-based, like the anime menu): "1  Title  [type]  (year)"
-    jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]  (\(.value.date // "" | .[0:4]))"' "$tmpfile" | hdec > "$tmpfile3"
+    # Build display list (1-based, like the anime menu): "1  Title  [type]".
+    # Titles carry their own release year; the API's date is an upload
+    # timestamp, so appending it showed a year that isn't the film's.
+    jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]"' "$tmpfile" | hdec > "$tmpfile3"
 
     _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 2   # 2 = user cancelled
     [ -z "$_selection" ] && return 2

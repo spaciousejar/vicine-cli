@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spending the update fetch. It now checks writability up front and says
   to update through the package manager instead.
 
+- The results picker (search/trending/recent/browse) showed the year
+  twice: API titles arrive as "Seriously Single (2020)" and the row
+  appended a "(…)" from the item's date field, which is an upload
+  timestamp — for this title the row read "Seriously Single (2020)
+  [movie] (2026)", and no-year titles got a wrong year too. The year
+  now shows only when the title itself carries it.
+
 ## [1.7.0] - 2026-10-17
 
 ### Removed
