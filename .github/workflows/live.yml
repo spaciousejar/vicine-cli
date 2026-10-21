@@ -1,0 +1,23 @@
+name: Live provider smoke test
+
+# The offline suites check the parsers against fixtures; this one checks the
+# providers themselves. A changed payload, a dead endpoint or a challenge
+# shell shows up here instead of in a user's search.
+
+on:
+  schedule:
+    # daily, a few minutes off the hour so the queue is empty
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Live provider check
+        run: VICINE_LIVE=1 sh tests/live.sh
