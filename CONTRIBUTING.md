@@ -65,3 +65,20 @@ change -> sh -n + tests/*.sh -> push master -> tag vX.Y.Z -> automation:
 vicine is a scraping tool — worst case an API changes shape. When a
 provider regresses, capture the raw API response and note the endpoint so
 the parsers can be fixed against something real.
+
+- The offline suites (`sh tests/*.sh`) check the parsers against fixtures.
+  `tests/live.sh` checks the providers themselves — it searches the real
+  hicine and hianime APIs and fails if the rows no longer parse. It is
+  skipped unless you ask for it:
+  ```sh
+  VICINE_LIVE=1 sh tests/live.sh
+  ```
+  CI runs it daily (`live.yml`).
+- `tests/portability.sh` keeps util-linux/GNU-only commands (and bashisms)
+  out of the script: stock macOS has none of them, and CI's macOS leg
+  would not catch a util-linux dependency the same way.
+- `scripts/verify-channels.sh <version>` probes what every distribution
+  channel actually serves (npm, GitHub Release, AUR, Homebrew tap, Scoop
+  bucket, Nix flake, the PPA). It is the check behind
+  `verify-channels.yml`, and it is how a "green release that nobody can
+  install" gets caught.

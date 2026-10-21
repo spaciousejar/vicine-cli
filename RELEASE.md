@@ -53,7 +53,16 @@ All on `master`, CI green:
 
 1. Watch Actions; if `release-verify` fails:
    `gh workflow run "Bump packaged versions"` — a stale bump is a manual fix.
-2. Spot-check the headline channels:
+2. **Verify the channels.** The workflows can be green while a channel holds
+   nothing — the Ubuntu PPA did exactly that for months. One command probes
+   every artifact (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix
+   flake, the PPA):
+   ```sh
+   sh scripts/verify-channels.sh 1.7.2 --wait 20
+   ```
+   CI runs the same check on the tag (`verify-channels.yml`) and fails the
+   build if a channel still doesn't serve the release after 20 minutes.
+3. Spot-check the headline channels:
    ```sh
    npm view vicine version
    # AUR answers JSON-RPC and the arg[] form is required — a bare ?vicine
@@ -61,7 +70,22 @@ All on `master`, CI green:
    # suffix (1.6.0-2), not the bare tag version.
    curl -s 'https://aur.archlinux.org/rpc/v5/info?arg[]=vicine' | jq -r '.results[0].Version'
    ```
-3. Done — the monthly audit covers everything else.
+4. Done — the monthly audit covers everything else.
+
+### The PPA needs one manual step
+
+`ppa.yml` uploads to Launchpad, but Launchpad only accepts an upload signed
+by a key **registered on the Launchpad account** — it rejects it silently
+otherwise, which is why the workflow stayed green for months while nothing
+was published. The job now waits for the source to appear in Launchpad's API
+and fails if it doesn't, so a rejected upload is red rather than silent.
+
+To fix a rejected upload: export the public half of the key the workflow
+signs with and register it at
+<https://launchpad.net/~spaciousejar/+gpgkeys>, and make sure the address
+in `DEBEMAIL` is confirmed on the account. Set the repo variable
+`PPA_GPG_FINGERPRINT` to the registered fingerprint and the workflow fails
+fast if the secret's key ever differs from it.
 
 ## Versioning model
 

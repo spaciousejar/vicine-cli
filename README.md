@@ -59,6 +59,27 @@ Homebrew) and the script itself; `--no-deps` skips the packages.
 yay -S vicine        # or: paru -S vicine
 ```
 
+### Ubuntu (PPA)
+
+```sh
+sudo add-apt-repository ppa:spaciousejar/vicine
+sudo apt update
+sudo apt install vicine
+```
+
+The PPA carries the dependencies (`curl jq fzf mpv`, with `yt-dlp` and
+`ffmpeg` recommended) and publishes for Ubuntu 24.04 (noble) and 26.10
+(resolute). **Check it before you rely on it** — the PPA is built and
+uploaded by CI, and a rejected upload leaves `apt update` failing with
+`403 Forbidden`:
+
+```sh
+sh scripts/verify-channels.sh 1.7.2   # prints what every channel serves
+```
+
+If the PPA doesn't serve your series yet, the one-liner installer above is
+the reliable path.
+
 ### Homebrew (macOS)
 
 ```sh
