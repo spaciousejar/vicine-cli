@@ -1329,13 +1329,17 @@ ANIME_ZOKO_KEY="otaku-embed-v1"
 ANIME_ZOKO_NUMS="$(printf '%s' "$ANIME_ZOKO_KEY" | od -An -v -tu1 | sed 's/^ *//')"
 zoko_xor() {
     # base64 → od decimal bytes → numeric XOR with key → plaintext JSON (ASCII)
+    # The key's byte list is compacted before use. macOS od pads its line with
+    # trailing blanks. GNU od does not pad. Splitting the padded list on
+    # blanks yields an empty element. The key cycle then has one byte too
+    # many, so every byte after the first cycle decodes to garbage.
     _kn="${ANIME_ZOKO_NUMS:-$(printf '%s' "$ANIME_ZOKO_KEY" | od -An -v -tu1 | sed 's/^ *//')}"
     { base64 -d 2>/dev/null || base64 -D 2>/dev/null; } |
         od -An -v -tu1 |
         awk -v kn="$_kn" '
             function bxor(a,b,  i,r){ for(i=0;i<8;i++){ r+=((a%2)!=(b%2))*2^i; a=int(a/2); b=int(b/2) } return r }
-            BEGIN { n=split(kn, kc, /[ \n]+/); idx=0 }
-            { for (i=1;i<=NF;i++){ printf "%c", bxor($i, kc[(idx%n)+1]); idx++ } }'
+            BEGIN { m=split(kn, kc, /[^0-9]+/); n=0; for (j=1; j<=m; j++) if (kc[j] != "") { n++; kv[n]=kc[j] } ; idx=0 }
+            { for (i=1;i<=NF;i++){ printf "%c", bxor($i, kv[(idx%n)+1]); idx++ } }'
 }
 zoko_src_of() {
     _page="$1"

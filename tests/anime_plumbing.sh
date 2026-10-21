@@ -51,6 +51,15 @@ BLOB='FFYSGRYPX08KERBdBQtAWwkHBgNUCA8HAUlYUxoOG0QYTBYZBxdKQEVEV0sVBB5IC1ADBwcPCw
 BAD='GFYSGRYPX08KERBdBQtAWwkHBgNUCA8HAUlYUxoOG0QYTBYZBxdKQEVEV0sVBB5IC1ADBwcPCw=='
 [ "$(printf '%s' "$BAD" | zoko_xor)" != "$PLAIN" ] \
     || _fail "zoko_xor ignored a corrupted input"
+# macOS od pads its line with trailing blanks. GNU od does not pad. Splitting
+# the padded list on blanks yields an empty element. The key cycle then has
+# 15 bytes instead of 14, so every byte after the first cycle decodes to
+# garbage. The decoder must ignore the padding. The macOS CI leg found this.
+ANIME_ZOKO_NUMS_SAVE="$ANIME_ZOKO_NUMS"
+ANIME_ZOKO_NUMS='111 116  97 107 117  45 101 109  98 101 100  45 118  49        '
+[ "$(printf '%s' "$BLOB" | zoko_xor)" = "$PLAIN" ] \
+    || _fail "zoko_xor broke on a padded key list (macOS od)"
+ANIME_ZOKO_NUMS="$ANIME_ZOKO_NUMS_SAVE"
 
 # anime_pick_quality: best = first line, worst = last resolution line,
 # a named quality = first substring match, no match = first line.
@@ -79,4 +88,4 @@ grep -qF 'anime_play_episode "$_ep" "$_occ"' "$SRC" \
 grep -qF 'season-${_ep_occ}/S${_ep_occ}E${_epnum}' "$SRC" \
     || _fail "anime -D still writes a fixed season-1 folder"
 
-echo "PASS (15 checks)"
+echo "PASS (22 checks)"

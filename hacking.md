@@ -95,19 +95,20 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
   new HTML/JSON. Grab the raw response, diff it against the pattern in the
   parser, adjust, and re-test with `sh -x`.
 - Shell differences matter: `/bin/sh` is dash on Debian/Ubuntu and bash on
-  Arch/Fedora. CI runs the whole suite under `sh`, `dash` and `bash` —
+  Arch/Fedora. CI runs the whole suite under `sh`, `dash` and `bash`. 
   `tests/args.sh` also accepts `VICINE="bash ../vicine"` to exercise the
   real script under a specific interpreter. CI also runs the suite on
-  **macOS**, whose userland is BSD: that is where a util-linux-only command
-  (`rev`, `cut -d, -f2-` quirks, bare `mktemp`) shows up as an empty
-  result instead of a working one.
+  **macOS**, whose userland is BSD. There, a util-linux-only command
+  (`rev`, `cut -d, -f2-` quirks, bare `mktemp`) appears as an empty result
+  instead of a working one.
 - Is the provider itself broken? `VICINE_LIVE=1 sh tests/live.sh` searches
-  the real hicine and hianime APIs and reports whether the rows still parse
-  — it is the same check the daily `live.yml` run makes.
-- Did a release actually reach the users? `sh scripts/verify-channels.sh
+  the real hicine and hianime APIs and reports whether the rows still parse.
+  The daily `live.yml` run makes that check.
+- Did a release reach the users? `sh scripts/verify-channels.sh
   1.7.2` probes npm, the GitHub Release, the AUR, the Homebrew tap, the
   Scoop bucket, the Nix flake and the Ubuntu PPA. A green release workflow
-  says the upload was *sent*, not that a channel *serves* it.
+  shows the upload went out. It does not show that a channel serves the
+  release.
 
 ## Architecture notes
 

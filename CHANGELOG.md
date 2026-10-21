@@ -9,38 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- macOS parsing: the link and episode parsers leaned on `rev` (util-linux —
-  stock macOS has none, and the installer's dependency list doesn't pull
-  coreutils in), so every anime quality and every link size/description came
-  out empty on a Mac. The chains are sed-only now — byte-identical on GNU,
-  same values on every platform. `tests/portability.sh` keeps util-linux and
-  GNU-only commands out of the script.
+- macOS parsing: the link and episode parsers leaned on `rev`. Stock macOS
+  has no `rev`, and the installer's dependency list does not pull coreutils
+  in. Every anime quality and every link size and description came out
+  empty on a Mac. The chains are sed-only now. They are byte-identical on
+  GNU, and they return the same values on every platform.
+  `tests/portability.sh` keeps util-linux and GNU-only commands out of the
+  script.
+- The anime decoder read the XOR key's byte list straight from `od`. macOS
+  `od` pads its line with trailing blanks, and the padded list gave the key
+  cycle one byte too many. Every byte after the first cycle then decoded to
+  garbage, so no episode link resolved on a Mac.
 
 ### Added
 
-- `scripts/verify-channels.sh` — probes what every distribution channel
+- `scripts/verify-channels.sh` probes what every distribution channel
   actually serves (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix
-  flake, the Ubuntu PPA) and fails when one doesn't serve the release. CI
-  runs it on every tag (`verify-channels.yml`). The PPA published nothing
-  for months behind a green workflow; this is the check that catches it.
-- `tests/live.sh` — a network smoke test that searches the real hicine and
-  hianime APIs and checks the rows still parse. It runs daily in CI
-  (`live.yml`), so a provider that changed its payload shows up there
+  flake, the Ubuntu PPA). It fails when one channel does not serve the
+  release. CI runs it on every tag (`verify-channels.yml`). The PPA
+  published nothing for months behind a green workflow. This is the check
+  that catches it.
+- `tests/live.sh` is a network smoke test. It searches the real hicine and
+  hianime APIs and checks that the rows still parse. It runs daily in CI
+  (`live.yml`). A provider that changed its payload then shows up there
   instead of in a user's search.
-- macOS runs the self-checks in CI now (`ubuntu-latest` + `macos-latest`).
-  Its userland is BSD, and the `rev` breakage above sat unnoticed for
-  months because CI was Linux-only.
+- macOS runs the self-checks in CI now (`ubuntu-latest` and `macos-latest`).
+  Its userland is BSD. The `rev` breakage above stayed unnoticed for months
+  because CI was Linux-only.
 
 ### Changed
 
-- The PPA workflow uploads per series (noble, resolute), prints the signing
-  key fingerprint, and waits for Launchpad to publish the source before it
-  calls the job a success. A rejected upload is red now, not silent.
-- `install.sh` and the suites use `mktemp` with a template — BSD `mktemp`
-  requires one, and the bare form broke the one-liner installer on macOS.
+- The PPA workflow uploads per series (noble, resolute). It prints the
+  signing key fingerprint. It waits for Launchpad to publish the source
+  before it calls the job a success. A rejected upload is red now, not
+  silent.
+- `install.sh` and the suites use `mktemp` with a template. BSD `mktemp`
+  requires one. The bare form broke the one-liner installer on macOS.
 - The README, RELEASE.md, CONTRIBUTING.md and hacking.md now say what
-  actually works on Ubuntu (the PPA is uploaded by CI and can be absent),
-  and how to check a channel yourself.
+  actually works on Ubuntu. The PPA is uploaded by CI and can be absent.
+  The docs also show how to check a channel yourself.
 
 ## [1.7.2] - 2026-10-21
 
