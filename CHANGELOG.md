@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-21
+
 ### Fixed
 
 - `VICINE_DL_JOBS`, `--page` and `--limit` weren't validated. A bad
