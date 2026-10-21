@@ -18,9 +18,9 @@ command -v play_season_zip >/dev/null 2>&1 || _fail "play_season_zip missing fro
 # Globals play_season_zip reads. Sourcing with VICINE_LIB stops before the
 # Main section, so the mktemp/dir setup there never ran — the suite makes its
 # own, exactly as the functions expect them to look.
-tmpfile2="$(mktemp)"; tmpfile3="$(mktemp)"
-quality=best; download_dir="$(mktemp -d)"
-histfile="$(mktemp)"
+tmpfile2="$(mktemp "${TMPDIR:-/tmp}/vicine-sz.XXXXXX")"; tmpfile3="$(mktemp "${TMPDIR:-/tmp}/vicine-sz.XXXXXX")"
+quality=best; download_dir="$(mktemp -d "${TMPDIR:-/tmp}/vicine-sz.XXXXXX")"
+histfile="$(mktemp "${TMPDIR:-/tmp}/vicine-sz.XXXXXX")"
 # shellcheck disable=SC2034  # read by the sourced play_season_zip
 exit_after_play=0
 

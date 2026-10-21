@@ -54,7 +54,7 @@ url="https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/vicine"
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 
 mkdir -p "$target"
-tmpfile="$(mktemp)"
+tmpfile="$(mktemp "${TMPDIR:-/tmp}/vicine-install.XXXXXX")"
 trap 'rm -f "$tmpfile"' EXIT
 
 curl -fsSL "$url" -o "$tmpfile" || { echo "failed to download script" >&2; exit 1; }

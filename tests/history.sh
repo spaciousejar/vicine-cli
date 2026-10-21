@@ -10,7 +10,7 @@ VICINE_LIB=1 . "$SCRIPT"
 _fail() { echo "FAIL: $1" >&2; exit 1; }
 command -v update_history >/dev/null 2>&1 || { echo "update_history missing from vicine" >&2; exit 1; }
 
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-hist.XXXXXX")"
 histfile="$tmp/history"
 : > "$histfile"
 

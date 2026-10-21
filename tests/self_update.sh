@@ -8,7 +8,7 @@
 # Usage: sh tests/self_update.sh
 
 VICINE_ABS="$(cd "$(dirname "$0")/.." && pwd)/vicine"
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-upd.XXXXXX")"
 target="$tmp/sim"
 _body="$tmp/body"
 
