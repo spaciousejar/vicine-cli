@@ -1,0 +1,35 @@
+name: Verify published channels
+
+# The release workflows can be green while a channel holds nothing — the
+# Ubuntu PPA published nothing for months behind a green workflow, and
+# nothing noticed until a user tried to apt install it. This job probes the
+# artifacts themselves (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket,
+# Nix flake, the PPA), so "green" means "a user can install this version".
+#
+# The wait is there because npm, the AUR and Launchpad publish
+# asynchronously — a tag push can be minutes ahead of the artifact.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "version to verify (e.g. 1.7.2)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every channel serves the release
+        run: |
+          ver="${{ github.event.inputs.version || github.ref_name }}"
+          ver="${ver#v}"
+          sh scripts/verify-channels.sh "$ver" --wait 20
