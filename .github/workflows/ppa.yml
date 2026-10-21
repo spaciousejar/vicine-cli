@@ -5,8 +5,16 @@ name: Publish to Launchpad PPA
 #   Triggers: push of a v* tag, or manual dispatch (uses the latest tag).
 #   Secrets:  PPA_GPG_PRIVATE_KEY (signs the .changes),
 #             PPA_SSH_PRIVATE_KEY  (registered on the Launchpad account)
+# Optional: repo variable PPA_GPG_FINGERPRINT — the fingerprint the signing
+#   key must have. Set it to the fingerprint registered on the Launchpad
+#   account and a rotated/mismatched secret fails the build here instead of
+#   being rejected by Launchpad minutes later.
 # The GPG public key must be uploaded + confirmed on Launchpad and the
-# DEBEMAIL address must be a confirmed email on the account.
+# DEBEMAIL address must be a confirmed email on the account. A green dput is
+# NOT a published package: Launchpad accepts uploads asynchronously and
+# rejects them (silently, by email) when the signing key is not registered —
+# so this job waits for the source to show up in Launchpad's API and fails if
+# it never appears. "Green" now means published.
 
 on:
   workflow_dispatch:
@@ -33,38 +41,58 @@ jobs:
           case "$ver" in *[!0-9.]*) echo "bad version: $ver" >&2; exit 1 ;; esac
           echo "ver=$ver" >> "$GITHUB_ENV"
 
-      - name: Build source package
+      - name: Build source packages (one per series)
         env:
           DEBFULLNAME: vicky jadhav
           DEBEMAIL: thedarkspacian@proton.me
+          # Launchpad takes only real Ubuntu codenames for PPAs — Distribution:
+          # "unstable" is silently rejected after a green dput (the workflow
+          # stayed green while nothing was ever published). One build per
+          # series: a .changes carries a single Distribution, and Launchpad
+          # wants the .dsc and the .changes to agree.
+          PPA_SERIES: "noble resolute"
         run: |
           wd="$RUNNER_TEMP/pkg"
           mkdir -p "$wd"
           curl -fsSL "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v${ver}.tar.gz" \
             -o "$wd/vicine_${ver}.orig.tar.gz"
           cd "$wd" && tar xzf "vicine_${ver}.orig.tar.gz"
-          mv "vicine-cli-${ver}" "vicine-${ver}"
-          cp -r "$GITHUB_WORKSPACE/debian" "vicine-${ver}/"
-          chmod +x "vicine-${ver}/vicine"
-          cd "vicine-${ver}"
-          # Launchpad takes only real Ubuntu codenames for PPAs — Distribution:
-          # "unstable" is silently rejected after a green dput (workflow stayed
-          # green while nothing was ever published)
-          dch --create -v "$ver-1" --package vicine -D resolute --force-distribution "Release $ver"
-          dpkg-buildpackage -S -sa -d
+          for series in $PPA_SERIES; do
+            rm -rf "src-$series"
+            cp -r "vicine-cli-${ver}" "src-$series"
+            cp -r "$GITHUB_WORKSPACE/debian" "src-$series/"
+            chmod +x "src-$series/vicine"
+            ( cd "src-$series"
+              dch --create -v "$ver-1" --package vicine -D "$series" --force-distribution "Release $ver"
+              dpkg-buildpackage -S -sa -d )
+            mkdir -p "$wd/$series"
+            mv -f vicine_${ver}-1.dsc vicine_${ver}-1_source.changes vicine_${ver}-1_source.buildinfo "$wd/$series/" 2>/dev/null || true
+            rm -f vicine_${ver}.orig.tar.gz
+            ls -1 "$wd/$series"
+          done
 
       - name: Import GPG key and sign
         env:
           GPG_KEY: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+          PPA_GPG_FINGERPRINT: ${{ vars.PPA_GPG_FINGERPRINT }}
         run: |
           gpg --batch --import <<< "$GPG_KEY"
           keyid="$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')"
-          debsign -k "$keyid" "$RUNNER_TEMP/pkg"/*_source.changes
+          fpr="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')"
+          echo "signing with key $fpr"
+          # the key has to be registered on the Launchpad account, otherwise
+          # the upload is rejected after the transfer and nothing is published
+          if [ -n "$PPA_GPG_FINGERPRINT" ] && [ "$fpr" != "$PPA_GPG_FINGERPRINT" ]; then
+            echo "signing key $fpr does not match PPA_GPG_FINGERPRINT ($PPA_GPG_FINGERPRINT)" >&2
+            exit 1
+          fi
+          debsign -k "$keyid" "$RUNNER_TEMP/pkg"/*/*_source.changes
 
       - name: Upload to PPA
         env:
           SSH_KEY: ${{ secrets.PPA_SSH_PRIVATE_KEY }}
           LP_USER: spaciousejar
+          PPA_SERIES: "noble resolute"
         run: |
           mkdir -p ~/.ssh
           printf 'Host ppa.launchpad.net\n  User %s\n  IdentityFile ~/.ssh/lp\n  IdentitiesOnly yes\n' "$LP_USER" > ~/.ssh/config
@@ -72,4 +100,27 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/lp
           chmod 600 ~/.ssh/lp
           ssh-keyscan ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
-          dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg"/*_source.changes
+          for series in $PPA_SERIES; do
+            dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg/$series/"*_source.changes
+          done
+
+      - name: Wait for Launchpad to publish
+        env:
+          LP_USER: spaciousejar
+        run: |
+          # a green dput is not a published package: Launchpad processes the
+          # upload asynchronously and rejects it when the signing key is not
+          # registered on the account. Poll the archive's own API.
+          deadline=$(( $(date +%s) + 900 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            found="$(curl -fsSL "https://api.launchpad.net/1.0/~${LP_USER}/+archive/ubuntu/vicine?ws.op=getPublishedSources&exact_match=true&source_name=vicine" \
+              | jq -r '.entries[]?.source_package_version' 2>/dev/null | head -1)"
+            case "$found" in
+              "$ver"|"$ver"-*) echo "published v$found"; exit 0 ;;
+            esac
+            echo "waiting for Launchpad to publish v$ver (saw: ${found:-nothing})"
+            sleep 30
+          done
+          echo "Launchpad did not publish v$ver within 15 minutes" >&2
+          echo "check the signing key is registered: https://launchpad.net/~${LP_USER}/+gpgkeys" >&2
+          exit 1
