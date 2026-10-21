@@ -248,8 +248,12 @@ parse_links() {
         url="$(printf "%s" "$line" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         _rest="$(printf "%s" "$line" | cut -d',' -f2- | sed 's/^[[:space:]]*//')"
         [ -z "$_rest" ] && continue
-        size="$(printf "%s" "$_rest" | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        desc="$(printf "%s" "$_rest" | rev | cut -d',' -f2- | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        # no rev (util-linux): stock macOS has none, and the old rev|cut
+        # chain left every size/description empty there. sed-only, and
+        # byte-identical to rev|cut on GNU — "after the last comma" for the
+        # size, "before the last comma" for the description
+        size="$(printf "%s" "$_rest" | sed 's/^.*,//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
+        desc="$(printf "%s" "$_rest" | sed 's/,[^,]*$//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
         printf "%s\t%s\t%s\n" "$url" "$desc" "$size"
     done
 }
@@ -275,8 +279,8 @@ parse_episodes() {
         fi
         _url="$(printf "%s" "$_best" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         _rest="$(printf "%s" "$_best" | cut -d',' -f2-)"
-        _qual="$(printf "%s" "$_rest" | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        _size="$(printf "%s" "$_rest" | rev | cut -d',' -f2- | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        _qual="$(printf "%s" "$_rest" | sed 's/^.*,//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
+        _size="$(printf "%s" "$_rest" | sed 's/,[^,]*$//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
         printf "%s\t%s\t%s\t%s\n" "$_ep_num" "$_url" "$_qual" "$_size"
     done
 }
@@ -286,7 +290,7 @@ parse_episodes() {
 # carry the same five-pipe chain inline
 qualities_of() {
     printf '%s\n' "$1" | sed -nE 's/^Episode [0-9]* : //p' | sed 's/ : /\n/g' \
-        | rev | cut -d',' -f1 | rev | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+        | sed 's/^.*,//;s/^[[:space:]]*//;s/[[:space:]]*$//' \
         | grep -oE '[0-9]+p' | sort -u
 }
 

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS parsing: the link and episode parsers leaned on `rev` (util-linux —
+  stock macOS has none, and the installer's dependency list doesn't pull
+  coreutils in), so every anime quality and every link size/description came
+  out empty on a Mac. The chains are sed-only now — byte-identical on GNU,
+  same values on every platform. `tests/portability.sh` keeps util-linux and
+  GNU-only commands out of the script.
+
 ## [1.7.2] - 2026-10-21
 
 ### Fixed
