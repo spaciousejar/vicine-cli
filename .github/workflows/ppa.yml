@@ -104,7 +104,11 @@ jobs:
           chmod 600 ~/.ssh/lp
           ssh-keyscan ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
           for series in $PPA_SERIES; do
-            dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg/$series/"*_source.changes
+            # Launchpad's ftp endpoint throws 550 'internal server error' at
+            # random; a retried upload goes through, so retry once before
+            # declaring the series dead
+            dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg/$series/"*_source.changes || \
+              { sleep 15; dput -f ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg/$series/"*_source.changes; }
           done
 
       - name: Wait for Launchpad to publish
