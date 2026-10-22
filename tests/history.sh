@@ -8,6 +8,8 @@ SCRIPT="$(dirname "$0")/../vicine"
 VICINE_LIB=1 . "$SCRIPT"
 
 _fail() { echo "FAIL: $1" >&2; exit 1; }
+# mac/BSD wc pads its output with spaces; GNU does not. tr both to be portable.
+_wc() { wc -l < "$1" | tr -d ' '; }
 command -v update_history >/dev/null 2>&1 || { echo "update_history missing from vicine" >&2; exit 1; }
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-hist.XXXXXX")"
@@ -16,32 +18,28 @@ histfile="$tmp/history"
 
 # a row is written, fields in the documented order
 update_history "slug-one" "The Show" series 2 7
-# trace for platform debug: macOS showed 'first update wrote no row' in CI,
-# and the step could not be reproduced on Linux. Remove this once it is green.
-set -x
-[ "$(wc -l < "$histfile")" = "1" ] || _fail "first update wrote no row"
-set +x
+[ "$(_wc "$histfile")" = "1" ] || _fail "first update wrote no row"
 [ "$(cut -f1 "$histfile")" = "slug-one" ] || _fail "slug column"
 [ "$(cut -f4 "$histfile")" = "2" ] || _fail "season column"
 
 # re-watching the same title replaces its row instead of appending a second
 update_history "slug-one" "The Show" series 3 8
-[ "$(wc -l < "$histfile")" = "1" ] || _fail "re-watch duplicated the row"
+[ "$(_wc "$histfile")" = "1" ] || _fail "re-watch duplicated the row"
 [ "$(cut -f5 "$histfile")" = "8" ] || _fail "re-watch did not update the episode"
 
 # numeric-looking slugs are distinct: awk's numeric compare made 005 delete 5
 update_history "005" "Five" movie 0 0
 update_history "5" "Five" movie 0 0
-[ "$(wc -l < "$histfile")" = "3" ] || _fail "slug 005 and slug 5 collided"
+[ "$(_wc "$histfile")" = "3" ] || _fail "slug 005 and slug 5 collided"
 
 # a title carrying a tab or newline must not forge a second row (its season
 # field is interpolated into a jq program on read-back)
 update_history "slug-two" "$(printf 'Evil\nTitle\tHere')" movie 0 0
-[ "$(wc -l < "$histfile")" = "4" ] || _fail "an embedded newline/tab forged a row"
+[ "$(_wc "$histfile")" = "4" ] || _fail "an embedded newline/tab forged a row"
 
 # an empty slug is a no-op (nothing to key the row on)
 update_history "" "No slug" movie 0 0
-[ "$(wc -l < "$histfile")" = "4" ] || _fail "an empty slug wrote a row"
+[ "$(_wc "$histfile")" = "4" ] || _fail "an empty slug wrote a row"
 
 # the staging file must be unique per call: a fixed "$histfile.tmp" meant two
 # copies running at once truncated each other's row before the mv

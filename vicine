@@ -526,7 +526,8 @@ update_history() {
 
 cmd_history() {
     [ -f "$histfile" ] && [ -s "$histfile" ] || { warn "No watch history yet."; return 0; }
-    _count=$(wc -l < "$histfile")
+    # mac/BSD wc pads its line count with spaces; GNU does not
+    _count=$(wc -l < "$histfile" | tr -d ' ')
     printf "" > "$tmpfile3"
     awk -F'\t' '{ printf "%d  %s", NR, $2; if ($3=="series") printf "  [S%sE%s]", $4, $5; else if ($3=="anime") printf "  [Ep%s]", $5; printf "\n" }' "$histfile" | hdec >> "$tmpfile3"
     # picker, not a raw menu: with -n set — or no TTY, where the script
