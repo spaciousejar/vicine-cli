@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y devscripts debhelper dpkg-dev dput
+        run: sudo apt-get update && sudo apt-get install -y devscripts debhelper dpkg-dev dput-ng python3-paramiko
 
       - name: Resolve version
         run: |
@@ -103,12 +103,14 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/lp
           chmod 600 ~/.ssh/lp
           ssh-keyscan ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
+          # Launchpad's ftp endpoint 550s uploads spuriously; the documented
+          # fix is sftp, which classic dput lacks and dput-ng ships. The
+          # profile must not be named "ppa" — that collides with /etc/dput.cf.
+          printf '[vicine-ppa]\nfqdn = ppa.launchpad.net\nmethod = sftp\nincoming = ~%s/ubuntu/vicine/\nlogin = %s\n' \
+            "$LP_USER" "$LP_USER" > ~/.dput.cf
           for series in $PPA_SERIES; do
-            # Launchpad's ftp endpoint throws 550 'internal server error' at
-            # random; a retried upload goes through, so retry once before
-            # declaring the series dead
-            dput ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg/$series/"*_source.changes || \
-              { sleep 15; dput -f ppa:${LP_USER}/vicine "$RUNNER_TEMP/pkg/$series/"*_source.changes; }
+            dput vicine-ppa "$RUNNER_TEMP/pkg/$series/"*_source.changes || \
+              { sleep 15; dput -f vicine-ppa "$RUNNER_TEMP/pkg/$series/"*_source.changes; }
           done
 
       - name: Wait for Launchpad to publish
