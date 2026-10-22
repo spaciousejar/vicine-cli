@@ -68,12 +68,13 @@ sudo apt install vicine
 ```
 
 The PPA carries the dependencies (`curl jq fzf mpv`, with `yt-dlp` and
-`ffmpeg` recommended) and publishes for Ubuntu 24.04 (noble) and 26.10
-(resolute). **Check it before you rely on it.** The PPA is built and uploaded
-by CI. A rejected upload leaves `apt update` failing with `403 Forbidden`:
+`ffmpeg` recommended). CI builds and uploads each release, and it fails the
+run unless Launchpad has actually published it. Serves Ubuntu 24.04 (noble)
+and 26.10 (resolute). A failed upload shows up as `apt update` reporting
+`403 Forbidden`:
 
 ```sh
-sh scripts/verify-channels.sh 1.7.2   # prints what every channel serves
+sh scripts/verify-channels.sh 1.7.3   # prints what every channel serves
 ```
 
 If the PPA does not serve your series yet, the one-liner installer above is

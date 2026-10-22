@@ -58,7 +58,7 @@ All on `master`, CI green:
    every artifact (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix
    flake, the PPA):
    ```sh
-   sh scripts/verify-channels.sh 1.7.2 --wait 20
+   sh scripts/verify-channels.sh 1.7.3 --wait 20
    ```
    CI runs the same check on the tag (`verify-channels.yml`). The build fails
    if a channel still does not serve the release after 20 minutes.
