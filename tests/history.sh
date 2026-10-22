@@ -16,7 +16,11 @@ histfile="$tmp/history"
 
 # a row is written, fields in the documented order
 update_history "slug-one" "The Show" series 2 7
+# trace for platform debug: macOS showed 'first update wrote no row' in CI,
+# and the step could not be reproduced on Linux. Remove this once it is green.
+set -x
 [ "$(wc -l < "$histfile")" = "1" ] || _fail "first update wrote no row"
+set +x
 [ "$(cut -f1 "$histfile")" = "slug-one" ] || _fail "slug column"
 [ "$(cut -f4 "$histfile")" = "2" ] || _fail "season column"
 
