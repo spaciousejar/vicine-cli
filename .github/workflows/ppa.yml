@@ -66,8 +66,10 @@ jobs:
               dch --create -v "$ver-1" --package vicine -D "$series" --force-distribution "Release $ver"
               dpkg-buildpackage -S -sa -d )
             mkdir -p "$wd/$series"
+            # dput uploads everything the .changes references, resolved next to
+            # the .changes file — so each series gets its own copy of the tarball
             mv -f vicine_${ver}-1.dsc vicine_${ver}-1_source.changes vicine_${ver}-1_source.buildinfo "$wd/$series/" 2>/dev/null || true
-            rm -f vicine_${ver}.orig.tar.gz
+            cp -f ../vicine_${ver}.orig.tar.gz "$wd/$series/" 2>/dev/null || true
             ls -1 "$wd/$series"
           done
 
