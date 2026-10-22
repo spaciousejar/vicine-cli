@@ -69,7 +69,7 @@ jobs:
             # dput uploads everything the .changes references, resolved next to
             # the .changes file — so each series gets its own copy of the tarball
             mv -f vicine_${ver}-1.dsc vicine_${ver}-1_source.changes vicine_${ver}-1_source.buildinfo "$wd/$series/" 2>/dev/null || true
-            cp -f ../vicine_${ver}.orig.tar.gz "$wd/$series/" 2>/dev/null || true
+            cp -f vicine_${ver}.orig.tar.gz "$wd/$series/" 2>/dev/null || true
             ls -1 "$wd/$series"
           done
 
