@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty and fell through to anime. `cmd_search()` now retries the miss with the
   whitespace runs joined by hyphens, then dropped entirely, before giving up.
   `tests/search_retry.sh` covers both.
+- The result list no longer carries the API's padding. A short query is padded
+  with unrelated titles — `man` came back with 100 rows, 9 of which contain the
+  word — so the picker offered films that have nothing to do with the query.
+  `filter_hits()` keeps the rows whose title contains a query word, and keeps
+  the served list when none does.
 
 ## [1.7.4] - 2026-10-29
 ### Security

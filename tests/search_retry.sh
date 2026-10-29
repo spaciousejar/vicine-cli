@@ -17,6 +17,9 @@ tmpfile="$tmp/result.json"
 tmpfile2="$tmp/picked.json"
 tmpfile3="$tmp/menu.txt"
 printf '%s' '[{"title":"Spider-Man","contentType":"movie"}]' > "$hits"
+padded="$tmp/padded.json"
+# the API pads "man" with unrelated titles; only the second row is real
+printf '%s' '[{"title":"Udaala (2025)"},{"title":"The Family Man:"}]' > "$padded"
 
 # fake curl: "spider-man" and "superman" have hits, nothing else; record every
 # URL it asked for
@@ -31,6 +34,7 @@ curl() {
         esac
     done
     case "$_url" in
+        *search/man) cp "$padded" "$_out" ;;
         *spider-man*|*superman*) cp "$hits" "$_out" ;;
         *) printf '[]' > "$_out" ;;
     esac
@@ -67,11 +71,18 @@ out="$(cmd_search 'spiderman')"
 [ "$out" = "chain:spiderman:no results" ] || _fail "single-word miss must fall straight to the chain; got: $out"
 [ "$(wc -l < "$log" | tr -d ' ')" = 1 ] || _fail "single-word query was retried: $(cat "$log")"
 
-# 4. cancel on the first picker stops before the retry
+# 4. padded results are trimmed to the rows that carry a query word
+: > "$log"
+out="$(cmd_search 'man')"
+[ "$out" = "info" ] || _fail "trimmed list did not reach the pick; got: $out"
+[ "$(jq -r .title "$tmpfile2")" = "The Family Man:" ] \
+    || _fail "picker kept padded rows: $(cat "$tmpfile2")"
+
+# 5. cancel on the first picker stops before the retry
 select_item() { return 2; }
 : > "$log"
 out="$(cmd_search 'spider man')"
 [ -z "$out" ] || _fail "cancel must return quietly; got: $out"
 [ "$(wc -l < "$log" | tr -d ' ')" = 1 ] || _fail "cancel still retried: $(cat "$log")"
 
-echo "PASS (4 checks)"
+echo "PASS (5 checks)"

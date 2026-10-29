@@ -1243,6 +1243,21 @@ provider_chain() {
     return 1
 }
 
+# The API pads a short query with unrelated titles ("man" -> 100 rows, 9 of
+# them carrying the word), so the picker offered junk. Keep the rows whose
+# title contains a query word; if none does, keep the list as served.
+filter_hits() { # $1 = query, $2 = json file, rewritten in place
+    _toks=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+        | jq -Rrs 'gsub("\\s+"; " ") | split(" ") | map(select(. != ""))')
+    if jq --argjson toks "$_toks" '
+        . as $all
+        | [$all[] | select(.title as $t | ($t | ascii_downcase) as $l
+            | any($toks[]; . as $w | $l | contains($w)))]
+        | if length > 0 then . else $all end' "$2" > "${2}.tmp"; then
+        mv "${2}.tmp" "$2"
+    fi
+}
+
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
@@ -1267,6 +1282,7 @@ cmd_search() {
             provider_chain "$_query" "API unreachable"
             return
         fi
+        filter_hits "$_query" "$tmpfile"
         select_item
         _sel_rc=$?
         if [ "$_sel_rc" -eq 0 ]; then
