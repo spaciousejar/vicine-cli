@@ -198,8 +198,19 @@ api_fetch() {
 
 # ─── URL resolution ─────────────────────────────────────────────────────────
 
+# Provider text reaches curl as a bare positional, so a value like --config=FILE
+# is parsed as an option and reads local files. Only http(s) may be fetched.
+is_http_url() {
+    case "$1" in
+        http://*|https://*) return 0 ;;
+    esac
+    return 1
+}
+
 resolve_stream_url() {
     _workers_url="$1"
+    # every URL below is built from this one, so refuse it before any use
+    is_http_url "$_workers_url" || return 1
     _vcloud_val="$(printf "%s" "$_workers_url" | sed -n 's/.*vcloud=//p' | sed 's/[& ].*//')"
     if [ -z "$_vcloud_val" ]; then
         # ?vcloud= present but empty → dead API placeholder; direct URLs
@@ -220,14 +231,24 @@ resolve_stream_url() {
     done
     [ -z "$_tokens_json" ] && printf "%s" "$_workers_url" && return
 
-    _type="$(printf "%s" "$_tokens_json" | sed -n 's/.*"tokens":{"\([^"]*\)".*/\1/p')"
-    _ts="$(printf "%s" "$_tokens_json" | sed -n "s/.*\"${_type}\":{\"ts\":\"\([^\"]*\)\".*/\1/p")"
-    _sig="$(printf "%s" "$_tokens_json" | sed -n "s/.*\"${_type}\":{[^}]*\"sig\":\"\([^\"]*\)\".*/\1/p")"
-
-    [ -z "$_type" ] && printf "%s" "$_workers_url" && return
+    # Parse the token map as JSON. Never interpolate provider-controlled text
+    # into a sed/awk program: GNU sed's `e` command runs shell commands, so a
+    # crafted "tokens" key is remote code execution.
+    _type="$(printf "%s" "$_tokens_json" | jq -r '.tokens | keys_unsorted[0] // empty' 2>/dev/null)"
+    case "$_type" in
+        ""|*[!A-Za-z0-9_.-]*)
+            printf "%s" "$_workers_url"
+            return 0
+            ;;
+    esac
+    _ts="$(printf "%s" "$_tokens_json" | jq -r --arg t "$_type" '.tokens[$t].ts // empty' 2>/dev/null)"
+    _sig="$(printf "%s" "$_tokens_json" | jq -r --arg t "$_type" '.tokens[$t].sig // empty' 2>/dev/null)"
 
     _go_url="${_base}/go?type=${_type}&vcloud=${_vcloud_val}&ts=${_ts}&sig=${_sig}"
     _real_url="$($curl_exe -sIL --max-time 10 "$_go_url" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's/^[Ll]ocation: *//;s/\r//')"
+    # the Location header is remote text too; a non-http value would reach curl
+    # as an option (--config=FILE) at the next probe. Fall back to the worker.
+    is_http_url "$_real_url" || _real_url=""
     [ -n "$_real_url" ] && printf "%s" "$_real_url" || printf "%s" "$_workers_url"
 }
 
@@ -294,9 +315,13 @@ qualities_of() {
         | grep -oE '[0-9]+p' | sort -u
 }
 
-# Decode common HTML entities in titles/headers
+# Decode common HTML entities in titles/headers, and drop terminal control
+# bytes except tab and newline: a remote title carrying an ANSI escape (or a
+# bare CR) can move the cursor or redraw the surrounding prompt. Tab and newline
+# survive because multi-line lists are piped through here.
 hdec() {
-    sed "s/&#0*39;/'/g; s/&#x27;/'/g; s/&quot;/\"/g; s/&amp;/\&/g"
+    sed "s/&#0*39;/'/g; s/&#x27;/'/g; s/&quot;/\"/g; s/&amp;/\&/g" \
+        | tr -d '\000-\010\013-\037\177'
 }
 
 # Percent-encode a string for use in a URL (spaces, &, #, /, etc.)
@@ -506,6 +531,9 @@ eps_by_request() {
 # Record last watched position. Format: slug\ttitle\ttype\tseason\tepisode
 update_history() {
     _slug="$1"; _title="$2"; _type="$3"; _season="$4"; _ep="$5"
+    # the slug is pasted back into an API path on resume: keep it to characters
+    # a URL path can hold, so control bytes can't reach the request or display
+    _slug="$(printf '%s' "$_slug" | sed 's/[^A-Za-z0-9_-]//g')"
     [ -z "$_slug" ] && return
     # `"" !=` forces a string compare: bare `$1 != s` compares numerically when
     # both look like numbers, so removing slug 005 also removed 5. The append
@@ -540,7 +568,7 @@ cmd_history() {
     resume_season=$(printf "%s" "$_entry" | cut -f4)
     resume_ep=$(printf "%s" "$_entry" | cut -f5)
     _type=$(printf "%s" "$_entry" | cut -f3)
-    _slug=$(printf "%s" "$_entry" | cut -f1)
+    _slug=$(printf "%s" "$_entry" | cut -f1 | sed 's/[^A-Za-z0-9_-]//g')
     if [ "$_type" = "series" ]; then
         api_fetch "/api/series/${_slug}" "$tmpfile2"
     elif [ "$_type" = "anime" ]; then
@@ -558,6 +586,14 @@ cmd_history() {
 }
 
 cmd_clear_history() {
+    # like --uninstall: destructive, so default is no
+    printf "\n  ${C_YELLOW}Delete watch history at %s?${C_RESET} [y/N] " "$histfile"
+    _yn=""
+    read -r _yn
+    case "$_yn" in
+        y|Y|yes|YES) ;;
+        *) warn "Cancelled."; exit 0 ;;
+    esac
     : > "$histfile"
     ok "History cleared."
     exit 0
@@ -570,10 +606,7 @@ cmd_clear_history() {
 # The 401/403 probe below can't help: it only runs for http(s). So allow only
 # an http(s) URL.
 check_stream_url() {
-    case "$1" in
-        http://*|https://*) return 0 ;;
-    esac
-    die "Refusing non-HTTP stream URL from provider: $1"
+    is_http_url "$1" || die "Refusing non-HTTP stream URL from provider: $1"
 }
 
 play_url() {
@@ -595,21 +628,21 @@ play_url() {
         *iina*)
             if [ "$exit_after_play" = 1 ]; then
                 # foreground so the player's exit code is returned
-                $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url"
+                "$player_function" --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url"
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
             if pgrep -x IINA >/dev/null 2>&1 || pgrep -x iina-cli >/dev/null 2>&1; then
-                nohup $player_function --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
+                nohup "$player_function" --no-stdin $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
             else
-                nohup $player_function --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
+                nohup "$player_function" --no-stdin --keep-running $_iina_hdr --mpv-force-media-title="$_name" "$_url" >/dev/null 2>&1 & _player_pid=$!
             fi
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup $player_function $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
+                nohup "$player_function" $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
             else
-                $player_function $_hdr --force-media-title="$_name" "$_url"
+                "$player_function" $_hdr --force-media-title="$_name" "$_url"
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
@@ -618,18 +651,18 @@ play_url() {
         *)
             if [ "$exit_after_play" = 1 ]; then
                 if [ -n "$_ref" ]; then
-                    $player_function --http-referrer="$_ref" "$_url"
+                    "$player_function" --http-referrer="$_ref" "$_url"
                 else
-                    $player_function "$_url"
+                    "$player_function" "$_url"
                 fi
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
             if [ -n "$_ref" ]; then
-                nohup $player_function --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
+                nohup "$player_function" --http-referrer="$_ref" "$_url" >/dev/null 2>&1 &
                 _player_pid=$!
             else
-                nohup $player_function "$_url" >/dev/null 2>&1 &
+                nohup "$player_function" "$_url" >/dev/null 2>&1 &
                 _player_pid=$!
             fi
             _pl_rc=0
@@ -1353,6 +1386,8 @@ zoko_src_of() {
 
 # CDN calls are referer-gated by hls.1embed.buzz
 anime_cdn_curl() {
+    # provider-supplied embed/master URLs: a leading "--" would be a curl option
+    is_http_url "$1" || return 1
     $curl_exe -sL -A "$vicine_ua" -e "$anime_embed_ref" --max-time 15 "$@"
 }
 
@@ -1555,7 +1590,7 @@ cmd_anime() {
     fi
     [ -z "$_result" ] && die "Invalid anime selection"
     anime_id="$(printf "%s" "$_result" | cut -f 1)"
-    anime_title="$(printf "%s" "$_result" | cut -f 2)"
+    anime_title="$(printf "%s" "$_result" | cut -f 2 | hdec)"
 
     info "Fetching episodes for $anime_title"
     anime_ep_maps="$(anidb_episodes "$anime_id")"
@@ -1599,7 +1634,7 @@ cmd_anime() {
         # only ask on a real terminal — piped/cron runs keep the old behavior
         if [ -t 0 ]; then
             if [ "$_total" -eq 1 ]; then _ep_label2="episode"; else _ep_label2="episodes"; fi
-            printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label2} of '${anime_title}'?${C_RESET} [Y/n] "
+            printf "\n  ${C_YELLOW}Download %s %s of '%s'?${C_RESET} [Y/n] " "$_total" "$_ep_label2" "$anime_title"
             read -r _yn
             # Enter or y/Y download; anything else (n, N, junk) cancels
             case "$_yn" in
@@ -1759,7 +1794,7 @@ if is_series; then
     fi
     if [ "$_total" -eq 1 ]; then _ep_label="episode"; else _ep_label="episodes"; fi
 
-    printf "\n  ${C_YELLOW}Download ${_total} ${_ep_label} of '${_title}' (${_sel_label})?${C_RESET} [Y/n] "
+    printf "\n  ${C_YELLOW}Download %s %s of '%s' (%s)?${C_RESET} [Y/n] " "$_total" "$_ep_label" "$_title" "$_sel_label"
     if [ -t 0 ]; then
         read -r _yn
         # Enter or y/Y download; anything else (n, N, junk) cancels
@@ -1962,6 +1997,13 @@ update_script() {
         https://raw.githubusercontent.com/spaciousejar/vicine-cli/*) ;;
         *) die "Refusing update source outside raw.githubusercontent.com: $_repo" ;;
     esac
+    # The prefix match does not confine the path: curl removes dot segments
+    # before the request, so .../vicine-cli/../../elsewhere/... passes the case
+    # above and then fetches a different repository. Refuse dot segments and
+    # encoded ones outright.
+    case "${_repo#https://raw.githubusercontent.com/spaciousejar/vicine-cli/}" in
+        ""|*..*|*%*) die "Refusing update path (dot or encoded segment): $_repo" ;;
+    esac
     info "Checking for updates..."
     _new="$(curl -sfL --max-time 20 "$_repo")" || die "Update failed: cannot fetch $_repo"
     _new_ver="$(printf "%s" "$_new" | sed -n 's/^version_number="\([^"]*\)"/\1/p')"
@@ -2007,6 +2049,14 @@ uninstall_self() {
         */*) _bin="$(cd "$(dirname "$_bin")" 2>/dev/null && pwd)/$(basename "$_bin")" ;;
     esac
     [ -e "$_bin" ] || die "Cannot locate installed script (expected $_bin)"
+    # irreversible and one keystroke away from a typo: default is no
+    printf "\n  ${C_YELLOW}Remove %s?${C_RESET} [y/N] " "$_bin"
+    _yn=""
+    read -r _yn
+    case "$_yn" in
+        y|Y|yes|YES) ;;
+        *) warn "Uninstall cancelled."; exit 0 ;;
+    esac
     if rm -f "$_bin"; then
         ok "Uninstalled $_bin"
     else
@@ -2169,6 +2219,12 @@ case "$menu_program" in
     fzf)  menu_multi_flag="-m" ;;
     rofi) menu_multi_flag="-multi-select" ;;
     *)    menu_multi_flag="" ;;
+esac
+
+# A player is a program, not a command line: VICINE_PLAYER="mpv --script=..."
+# passes the *mpv* match below, and the old unquoted expansion ran both words.
+case "$player_function" in
+    *[[:space:]]*) die "Player must be a single program name or path: $player_function" ;;
 esac
 
 # Deps check

@@ -37,9 +37,15 @@ update_history "5" "Five" movie 0 0
 update_history "slug-two" "$(printf 'Evil\nTitle\tHere')" movie 0 0
 [ "$(_wc "$histfile")" = "4" ] || _fail "an embedded newline/tab forged a row"
 
+# the slug is pasted back into an API path on resume: strip anything a URL path
+# cannot hold (vicine-audit V-07)
+update_history "../../etc/passwd?x" "Traversal" movie 0 0
+[ "$(cut -f1 "$histfile" | tail -1)" = "etcpasswdx" ] \
+    || _fail "slug not sanitised: $(cut -f1 "$histfile" | tail -1)"
+
 # an empty slug is a no-op (nothing to key the row on)
 update_history "" "No slug" movie 0 0
-[ "$(_wc "$histfile")" = "4" ] || _fail "an empty slug wrote a row"
+[ "$(_wc "$histfile")" = "5" ] || _fail "an empty slug wrote a row"
 
 # the staging file must be unique per call: a fixed "$histfile.tmp" meant two
 # copies running at once truncated each other's row before the mv
@@ -47,4 +53,4 @@ grep -qF 'mktemp "$histfile.tmp.XXXXXX"' "$SCRIPT" \
     || _fail "update_history stages through a fixed temp name again"
 
 rm -rf "$tmp"
-echo "PASS (8 checks)"
+echo "PASS (9 checks)"

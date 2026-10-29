@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Security
+
+- Provider text no longer reaches a `sed` program. `resolve_stream_url()` parsed
+  the `/api/links` token map by interpolating the provider's key name into a
+  double-quoted `sed` script, and GNU sed's `e` command runs its argument. A key
+  shaped `x/;e :;/;e <cmd>;#` therefore ran shell commands as the invoking user,
+  with stdout captured into the `/go` request. The token map is parsed with `jq`
+  now (already a dependency) and the key is accepted only if it is
+  `[A-Za-z0-9_.-]`. `tests/provider_input.sh` covers it.
+- Non-HTTP URLs are refused before curl sees them. One `is_http_url()` check now
+  guards the stream resolver, the `/go` `Location` value, and the embed curl
+  call, so a provider value of `--config=FILE` can no longer be read as a curl
+  option and disclose local files.
+- `VICINE_UPDATE_URL` can no longer climb out of the project directory. The
+  prefix check stays, and the path after `…/vicine-cli/` may not contain `..` or
+  `%`; curl normalises `..` after the check, so the old match fetched any
+  repository on the host and executed it after an `sh -n` check.
+- Remote titles can no longer rewrite the terminal or the prompt. `hdec()` drops
+  control bytes as every title and header passes through it (colours, tabs and
+  newlines survive), and the download confirmations pass the titles as `printf`
+  arguments instead of building the format string from them.
+- `VICINE_PLAYER` is quoted at every exec site and must name one program. A value
+  such as `mpv --script=…` used to pass the `*mpv*` match and then run both
+  words. Players that need fixed flags now need a wrapper script.
+- History slugs are filtered to `[A-Za-z0-9_-]` on write and on read, so an
+  older history file is covered too, and no control byte reaches the resume API
+  path.
+- `--uninstall` and `-C` ask first and default to no. Enter, any other answer, or
+  no terminal at all cancels instead of deleting the script or the watch history.
+
 
 ## [1.7.3] - 2026-10-22
 ### Fixed
