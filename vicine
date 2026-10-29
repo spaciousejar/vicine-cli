@@ -1247,12 +1247,17 @@ cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
     # server-1 matches titles literally, so "spider man" misses where
-    # "spider-man" hits: retry once with spaces turned into hyphens
+    # "spider-man" hits and "super man" only finds "superman": on a miss,
+    # retry with the whitespace joined by hyphens, then with it removed
     _alt=$(printf '%s' "$_query" | tr -s '[:space:]' '-' | sed 's/^-*//; s/-*$//')
+    _joined=$(printf '%s' "$_query" | tr -d '[:space:]')
     [ "$_alt" = "$_query" ] && _alt=
+    [ "$_joined" = "$_query" ] && _joined=
+    [ "$_joined" = "$_alt" ] && _joined=
     info "Searching: $_query"
     set -- "$_query"
-    [ -n "$_alt" ] && set -- "$_query" "$_alt"
+    [ -n "$_alt" ] && set -- "$@" "$_alt"
+    [ -n "$_joined" ] && set -- "$@" "$_joined"
     for _cand in "$@"; do
         [ "$_cand" != "$_query" ] && info "No match; retrying: $_cand"
         if ! $curl_exe -sf --max-time 20 "${API}/api/search/$(henc "$_cand")" -o "$tmpfile"; then

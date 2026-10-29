@@ -18,7 +18,8 @@ tmpfile2="$tmp/picked.json"
 tmpfile3="$tmp/menu.txt"
 printf '%s' '[{"title":"Spider-Man","contentType":"movie"}]' > "$hits"
 
-# fake curl: only the hyphenated query has hits; record every URL it asked for
+# fake curl: "spider-man" and "superman" have hits, nothing else; record every
+# URL it asked for
 log="$tmp/urls"
 curl() {
     _url='' _out=''
@@ -30,7 +31,7 @@ curl() {
         esac
     done
     case "$_url" in
-        *spider-man*) cp "$hits" "$_out" ;;
+        *spider-man*|*superman*) cp "$hits" "$_out" ;;
         *) printf '[]' > "$_out" ;;
     esac
 }
@@ -53,17 +54,24 @@ out="$(cmd_search 'spider man')"
 grep -q 'spider%20man' "$log" || _fail "first request did not carry the spaced query: $(cat "$log")"
 grep -q 'spider-man' "$log" || _fail "second request did not carry the hyphenated query: $(cat "$log")"
 
-# 2. no whitespace -> one request only, no pointless retry
+# 2. hyphenated miss, de-spaced hit: "super man" only exists as "superman"
+: > "$log"
+out="$(cmd_search 'super man')"
+[ "$out" = "info" ] || _fail "de-spaced retry did not reach the pick; got: $out"
+grep -q 'search/superman$' "$log" || _fail "no request carried the de-spaced query: $(cat "$log")"
+[ "$(wc -l < "$log" | tr -d ' ')" = 3 ] || _fail "expected three search requests; got: $(cat "$log")"
+
+# 3. no whitespace -> one request only, no pointless retry
 : > "$log"
 out="$(cmd_search 'spiderman')"
 [ "$out" = "chain:spiderman:no results" ] || _fail "single-word miss must fall straight to the chain; got: $out"
 [ "$(wc -l < "$log" | tr -d ' ')" = 1 ] || _fail "single-word query was retried: $(cat "$log")"
 
-# 3. cancel on the first picker stops before the retry
+# 4. cancel on the first picker stops before the retry
 select_item() { return 2; }
 : > "$log"
 out="$(cmd_search 'spider man')"
 [ -z "$out" ] || _fail "cancel must return quietly; got: $out"
 [ "$(wc -l < "$log" | tr -d ' ')" = 1 ] || _fail "cancel still retried: $(cat "$log")"
 
-echo "PASS (3 checks)"
+echo "PASS (4 checks)"
