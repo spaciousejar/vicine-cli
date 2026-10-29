@@ -1246,27 +1246,33 @@ provider_chain() {
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
-    _encoded=$(henc "$_query")
+    # server-1 matches titles literally, so "spider man" misses where
+    # "spider-man" hits: retry once with spaces turned into hyphens
+    _alt=$(printf '%s' "$_query" | tr -s '[:space:]' '-' | sed 's/^-*//; s/-*$//')
+    [ "$_alt" = "$_query" ] && _alt=
     info "Searching: $_query"
-    if ! $curl_exe -sf --max-time 20 "${API}/api/search/${_encoded}" -o "$tmpfile"; then
-        # die before the chain: an unreachable API is not the same as a miss,
-        # and -i must not turn a dead endpoint into a full fallback search
-        [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
-        provider_chain "$_query" "API unreachable"
-        return
-    fi
-    select_item
-    _sel_rc=$?
-    if [ "$_sel_rc" -ne 0 ]; then
-        if [ "$_sel_rc" = 2 ]; then
-            # user cancelled the picker — exit quietly, no provider chain
+    set -- "$_query"
+    [ -n "$_alt" ] && set -- "$_query" "$_alt"
+    for _cand in "$@"; do
+        [ "$_cand" != "$_query" ] && info "No match; retrying: $_cand"
+        if ! $curl_exe -sf --max-time 20 "${API}/api/search/$(henc "$_cand")" -o "$tmpfile"; then
+            # die before the chain: an unreachable API is not the same as a miss,
+            # and -i must not turn a dead endpoint into a full fallback search
+            [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
+            provider_chain "$_query" "API unreachable"
+            return
+        fi
+        select_item
+        _sel_rc=$?
+        if [ "$_sel_rc" -eq 0 ]; then
+            [ "$info_only" -eq 1 ] && show_info
+            [ "$info_only" -eq 0 ] && prompt_action
             return 0
         fi
-        provider_chain "$_query" "no results" || warn "No results found for: $_query"
-        return
-    fi
-    [ "$info_only" -eq 1 ] && show_info
-    [ "$info_only" -eq 0 ] && prompt_action
+        # user cancelled the picker — exit quietly, no provider chain
+        [ "$_sel_rc" = 2 ] && return 0
+    done
+    provider_chain "$_query" "no results" || warn "No results found for: $_query"
 }
 
 # -t/-r share one handler: the endpoints differ only in the API root; the

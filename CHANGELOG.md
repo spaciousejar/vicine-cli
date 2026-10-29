@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+
+- `-s "spider man"` now finds "Spider-Man". Server-1 matches titles literally, so
+  a spaced query came back empty and fell through to anime. `cmd_search()` now
+  retries once with the whitespace runs turned into hyphens before giving up.
+  `tests/search_retry.sh` covers it.
 
 ## [1.7.4] - 2026-10-29
 ### Security

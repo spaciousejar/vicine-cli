@@ -13,7 +13,7 @@ grep -q '\$curl_exe -sf --max-time 20 "\${API}\${1}"' "$SCRIPT" \
     || _fail "api_fetch() has no --max-time; a stalled endpoint hangs the catalogue menus forever"
 
 # 2. search is bounded — the fallback can never trigger without this
-grep -q '\$curl_exe -sf --max-time 20 "\${API}/api/search/\${_encoded}"' "$SCRIPT" \
+grep -q '\$curl_exe -sf --max-time 20 "\${API}/api/search/\$(henc' "$SCRIPT" \
     || _fail "cmd_search's curl has no --max-time; a slow server-1 hangs instead of falling through to hianime"
 
 # 3. the self-update fetch is bounded
