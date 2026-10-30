@@ -60,7 +60,10 @@ check() { # label, expected, actual
 }
 
 get() { # url -> body on stdout, non-zero on fetch failure
-    curl -fsSL --max-time 30 "$1" 2>/dev/null
+    # raw.githubusercontent.com drops requests now and then; one silent retry
+    # keeps a healthy channel from being reported as the one that is behind.
+    curl -fsSL --max-time 30 "$1" 2>/dev/null ||
+        { sleep 2; curl -fsSL --max-time 30 "$1" 2>/dev/null; }
 }
 
 code() { # url -> http status
