@@ -1,5 +1,5 @@
 {
-    "version": "1.7.4",
+    "version": "1.7.5",
     "description": "Search, stream, and download movies, series and anime from the terminal",
     "homepage": "https://github.com/spaciousejar/vicine-cli",
     "license": "GPL-3.0",
@@ -9,8 +9,8 @@
         "fzf",
         "yt-dlp"
     ],
-    "url": "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.7.4.tar.gz",
-    "hash": "6fd395aab2d13566c6b9883c000efb9d3823c4943818fbb5eba1da0b951c6cd0",
+    "url": "https://github.com/spaciousejar/vicine-cli/archive/refs/tags/v1.7.5.tar.gz",
+    "hash": "2e6816562cb329ce0ef81e93ea448ee6d9fb36b67e9c897f398a7b32a64fb771",
     "extract_dir": "vicine-cli-$version",
     "installer": {
         "script": "$bash = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\\bash.exe'; Set-Content -Path \"$dir\\vicine.cmd\" -Value \"@echo off`r`n@`\"$bash`\" `\"$dir\\vicine`\" %*\" -Encoding Ascii"
