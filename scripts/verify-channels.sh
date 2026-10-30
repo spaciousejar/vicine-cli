@@ -77,8 +77,10 @@ run_checks() {
     # GitHub Release
     check "github release" "200" "$(code "https://api.github.com/repos/$OWNER/$REPO/releases/tags/v$ver")"
 
-    # AUR (the package lives in its own git, not this repo)
-    _v="$(get "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=vicine" | sed -n 's/^pkgver=//p')"
+    # AUR (the package lives in its own git, not this repo). Read the RPC:
+    # the cgit plain view can serve a cached copy of the old PKGBUILD, and
+    # its "Version" carries the pkgrel (1.7.5-2).
+    _v="$(get 'https://aur.archlinux.org/rpc/v5/info?arg[]=vicine' | sed -n 's/.*"Version":"\([0-9][0-9.]*\)-[0-9][0-9]*".*/\1/p')"
     check "aur" "$ver" "$_v"
 
     # Homebrew tap (separate repo). The formula carries no version line —

@@ -26,7 +26,7 @@ for a; do
     case "$a" in
         *registry.npmjs.org*) printf '{"version":"%s"}' "$FIX_VER" ;;
         *api.github.com*)     exit 22 ;;
-        *aur.archlinux.org*)  printf 'pkgver=%s\n' "$FIX_VER" ;;
+        *aur.archlinux.org*)  printf '{"Version":"%s-2"}\n' "$FIX_VER" ;;
         *homebrew-vicine-cli*) printf '  url "https://x/refs/tags/v%s.tar.gz"\n' "$FIX_VER" ;;
         *bucket/vicine.json*) printf '{"version": "%s"}\n' "$FIX_VER" ;;
         *flake.nix*)          printf '  version = "%s";\n' "$FIX_VER" ;;
