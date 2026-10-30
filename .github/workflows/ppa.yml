@@ -124,7 +124,9 @@ jobs:
           # registered on the account. Poll the archive's own binaries: the
           # SOURCE going Published does not mean apt can install it — 1.7.4
           # published as a source on noble while every binary stayed 1.7.3.
-          deadline=$(( $(date +%s) + 900 ))
+          # 45 minutes, not 15: 1.7.5 queued its build for 37 minutes and a
+          # shorter window reported a healthy release as failed.
+          deadline=$(( $(date +%s) + 2700 ))
           while [ "$(date +%s)" -lt "$deadline" ]; do
             found="$(curl -fsSL "https://api.launchpad.net/1.0/~${LP_USER}/+archive/ubuntu/vicine?ws.op=getPublishedBinaries&exact_match=true&binary_name=vicine" \
               | jq -r '.entries[]? | select(.status == "Published" and (.distro_arch_series_link | endswith("/amd64"))) | .binary_package_version' 2>/dev/null | sort -V | tail -1)"
@@ -134,7 +136,7 @@ jobs:
             echo "waiting for a v$ver amd64 binary (saw: ${found:-nothing})"
             sleep 30
           done
-          echo "Launchpad published no v$ver amd64 binary within 15 minutes" >&2
+          echo "Launchpad published no v$ver amd64 binary within 45 minutes" >&2
           echo "check the signing key is registered: https://launchpad.net/~${LP_USER}/+gpgkeys" >&2
           echo "and that every series in PPA_SERIES is enabled: https://launchpad.net/~${LP_USER}/+archive/ubuntu/vicine/+edit" >&2
           exit 1
