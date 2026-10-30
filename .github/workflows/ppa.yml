@@ -13,8 +13,9 @@ name: Publish to Launchpad PPA
 # DEBEMAIL address must be a confirmed email on the account. A green dput is
 # NOT a published package: Launchpad accepts uploads asynchronously and
 # rejects them (silently, by email) when the signing key is not registered —
-# so this job waits for the source to show up in Launchpad's API and fails if
-# it never appears. "Green" now means published.
+# so this job waits for a Published amd64 BINARY to show up in Launchpad's API
+# (a published source is not installable) and fails if it never appears.
+# "Green" now means apt can install it.
 
 on:
   workflow_dispatch:
@@ -25,6 +26,14 @@ on:
 jobs:
   ppa:
     runs-on: ubuntu-latest
+    env:
+      # Launchpad takes only real Ubuntu codenames for PPAs — Distribution:
+      # "unstable" is silently rejected after a green dput (the workflow
+      # stayed green while nothing was ever published). One build per
+      # series: a .changes carries a single Distribution, and Launchpad
+      # wants the .dsc and the .changes to agree. This is the only list:
+      # scripts/verify-channels.sh reads it from here.
+      PPA_SERIES: "noble resolute"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,12 +54,6 @@ jobs:
         env:
           DEBFULLNAME: vicky jadhav
           DEBEMAIL: thedarkspacian@proton.me
-          # Launchpad takes only real Ubuntu codenames for PPAs — Distribution:
-          # "unstable" is silently rejected after a green dput (the workflow
-          # stayed green while nothing was ever published). One build per
-          # series: a .changes carries a single Distribution, and Launchpad
-          # wants the .dsc and the .changes to agree.
-          PPA_SERIES: "noble resolute"
         run: |
           wd="$RUNNER_TEMP/pkg"
           mkdir -p "$wd"
@@ -95,7 +98,6 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.PPA_SSH_PRIVATE_KEY }}
           LP_USER: spaciousejar
-          PPA_SERIES: "noble resolute"
         run: |
           mkdir -p ~/.ssh
           printf 'Host ppa.launchpad.net\n  User %s\n  IdentityFile ~/.ssh/lp\n  IdentitiesOnly yes\n' "$LP_USER" > ~/.ssh/config
@@ -119,17 +121,20 @@ jobs:
         run: |
           # a green dput is not a published package: Launchpad processes the
           # upload asynchronously and rejects it when the signing key is not
-          # registered on the account. Poll the archive's own API.
+          # registered on the account. Poll the archive's own binaries: the
+          # SOURCE going Published does not mean apt can install it — 1.7.4
+          # published as a source on noble while every binary stayed 1.7.3.
           deadline=$(( $(date +%s) + 900 ))
           while [ "$(date +%s)" -lt "$deadline" ]; do
-            found="$(curl -fsSL "https://api.launchpad.net/1.0/~${LP_USER}/+archive/ubuntu/vicine?ws.op=getPublishedSources&exact_match=true&source_name=vicine" \
-              | jq -r '.entries[]?.source_package_version' 2>/dev/null | head -1)"
+            found="$(curl -fsSL "https://api.launchpad.net/1.0/~${LP_USER}/+archive/ubuntu/vicine?ws.op=getPublishedBinaries&exact_match=true&binary_name=vicine" \
+              | jq -r '.entries[]? | select(.status == "Published" and (.distro_arch_series_link | endswith("/amd64"))) | .binary_package_version' 2>/dev/null | sort -V | tail -1)"
             case "$found" in
-              "$ver"|"$ver"-*) echo "published v$found"; exit 0 ;;
+              "$ver"|"$ver"-*) echo "published binary v$found"; exit 0 ;;
             esac
-            echo "waiting for Launchpad to publish v$ver (saw: ${found:-nothing})"
+            echo "waiting for a v$ver amd64 binary (saw: ${found:-nothing})"
             sleep 30
           done
-          echo "Launchpad did not publish v$ver within 15 minutes" >&2
+          echo "Launchpad published no v$ver amd64 binary within 15 minutes" >&2
           echo "check the signing key is registered: https://launchpad.net/~${LP_USER}/+gpgkeys" >&2
+          echo "and that every series in PPA_SERIES is enabled: https://launchpad.net/~${LP_USER}/+archive/ubuntu/vicine/+edit" >&2
           exit 1

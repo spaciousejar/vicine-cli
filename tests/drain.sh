@@ -5,12 +5,11 @@
 # interrupted. Uses real child processes — subshells, no shell builtins.
 # Usage: sh tests/drain.sh
 
-SRC="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SRC"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
-command -v drain_jobs >/dev/null 2>&1 || _fail "drain_jobs missing from vicine"
+load_vicine
+
+need drain_jobs
 
 # no workers queued: drain is a no-op, rc stays 0
 drain_jobs

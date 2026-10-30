@@ -6,9 +6,9 @@
 # description empty on macOS (no coreutils in the installer's dep list).
 # Usage: sh tests/portability.sh
 
-SRC="$(dirname "$0")/../vicine"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+SRC="$(dirname "$0")/../vicine"
 
 # util-linux/GNU-only commands, matched in command position only (start of a
 # command, after a pipe/;/&/(), or inside $( )) so prose in comments
@@ -29,8 +29,7 @@ fi
 
 # the parse chains must yield the same values on every platform: these are
 # exactly the strings macOS used to get empty
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SRC"
+load_vicine
 
 _season='Episode 1 : https://cdn/a.m3u8,360p,480p : https://cdn/b.m3u8,480p,720p'
 

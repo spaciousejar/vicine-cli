@@ -7,12 +7,12 @@
 # to serve canned bodies (or fail, for the unreachable case).
 # Usage: sh tests/self_update.sh
 
+. "$(dirname "$0")/lib.sh"
+
 VICINE_ABS="$(cd "$(dirname "$0")/.." && pwd)/vicine"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-upd.XXXXXX")"
 target="$tmp/sim"
 _body="$tmp/body"
-
-_fail() { echo "FAIL: $1" >&2; exit 1; }
 
 printf '#!/bin/sh\ncat "%s"\n' "$_body" > "$tmp/curl"
 chmod 755 "$tmp/curl"

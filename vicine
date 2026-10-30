@@ -170,9 +170,10 @@ cleanup() {
     _rc=$?
     [ "$_exit_code" = 0 ] && _exit_code="$_rc"
     [ -t 1 ] && tput sgr0 2>/dev/null
-    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "${tmpfile}.tmp" "${tmpfile3}.pre"
+    rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5" "${tmpfile}.tmp" "${tmpfile3}.pre"
     # ours only: a concurrent copy's stage file is the mktemp'd name IT tracked
     [ -n "${_hist_stage:-}" ] && rm -f "$_hist_stage"
+    [ -n "${_hist_lock:-}" ] && rm -rf "$_hist_lock"
     exit "$_exit_code"
 }
 
@@ -346,6 +347,7 @@ sanitize() {
 # bucket entry or an HTML page while a lesser one still plays — the blind
 # pick made -q best play a 404 (Loving 2016: 1080p dead, 720p/480p alive).
 movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
+    _mi=0
     printf '%s\n' "$1" |
         awk -F'\t' -v q="$quality" '
             { r = 0
@@ -353,15 +355,20 @@ movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
               m = (q != "best" && index(tolower($2), tolower(q))) ? 0 : 1
               printf "%s\t%s\t%s\n", m, 9999 - r, $1 }' |
         sort -n | cut -f3 |
+        # 3 is the cap: each dead candidate costs ~40 s (token, redirect,
+        # body probe), so a five-dead-variant title looked hung for a minute
+        head -3 |
         while IFS= read -r _mu; do
             [ -n "$_mu" ] || continue
+            _mi=$((_mi + 1))
+            [ "$_mi" -gt 1 ] && warn "Trying next source..." >&2
             _mr="$(resolve_stream_url "$_mu")"
             [ -n "$_mr" ] || continue
             # a 200 isn't enough: source pages serve HTML at 200 (pixeldrain
             # /u/ pages do), JSON/JSONP, and text error pages count too.
             # Body-sniff the first bytes — same reject-set _stage_ok uses —
             # instead of trusting the status code.
-            _body="$(curl -s -r 0-31 --max-time 20 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
+            _body="$($curl_exe -s -r 0-31 --max-time 20 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
             case "${_body:-}" in
                 "") warn "Source unreachable — next quality." >&2 ;;
                 \<\!doc*|\<html*|\<\?xml*|\{*|\[*)
@@ -538,10 +545,25 @@ update_history() {
     # `"" !=` forces a string compare: bare `$1 != s` compares numerically when
     # both look like numbers, so removing slug 005 also removed 5. The append
     # uses "" as well so the dedup key keeps awk's string semantics.
-    # mktemp, not a fixed "$histfile.tmp": two copies running at once (two
-    # terminals) shared that name, so the second awk truncation erased the
-    # first one's new row before its mv
-    _hist_stage="$(mktemp "$histfile.tmp.XXXXXX")" || return
+    # The mv below is last-writer-wins, so two terminals running at once kept
+    # only the last row (measured: 8 writers left 2 rows). Hold a lock around
+    # the read-modify-write. mkdir is atomic; the pid file lets the next
+    # writer break a lock left behind by a killed process.
+    _lock="$histfile.lock"
+    _hist_try=0
+    while ! mkdir "$_lock" 2>/dev/null; do
+        _hist_try=$(( _hist_try + 1 ))
+        [ "$_hist_try" -ge 100 ] && return
+        _hist_pid="$(cat "$_lock/pid" 2>/dev/null)"
+        [ -n "$_hist_pid" ] && ! kill -0 "$_hist_pid" 2>/dev/null && rm -rf "$_lock"
+        sleep 0.1 2>/dev/null || sleep 1
+    done
+    # cleanup must remove this lock only if this process took it
+    _hist_lock="$_lock"
+    printf '%s\n' "$$" > "$_hist_lock/pid"
+    # mktemp, not a fixed "$histfile.tmp": the name is unique per writer, so
+    # one writer's stage can never be truncated by the next one
+    _hist_stage="$(mktemp "$histfile.tmp.XXXXXX")" || { rm -rf "$_hist_lock"; _hist_lock=""; return; }
     awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$_hist_stage" 2>/dev/null || true
     # flatten tabs/newlines in the remote title: an embedded one would forge a
     # whole extra row, and its season field reaches a jq program on read-back.
@@ -550,6 +572,8 @@ update_history() {
     _title="$(printf '%s' "$_title" | tr '\t\n' '  ')"
     printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$_hist_stage"
     mv "$_hist_stage" "$histfile"
+    rm -rf "$_hist_lock"
+    _hist_lock=""
 }
 
 cmd_history() {
@@ -702,12 +726,16 @@ _stage_ok() {
 # individually because dash's bare `wait` returns the last job's status while
 # bash/POSIX return 0 — a Ctrl-C inside a worker would be swallowed there.
 # _drain_rc ends >=130 when any worker reported an interrupt; callers exit
-# the download run in response.
+# the download run in response. _dl_failed counts the ordinary failures
+# (1..129) so a -D run can say "N episode(s) failed" and exit non-zero.
 drain_jobs() {
     _drain_rc=0
     for _djp in "$@"; do
         wait "$_djp"; _dj=$?
         [ "$_dj" -ge 130 ] && _drain_rc="$_dj"
+        if [ "$_dj" -ne 0 ] && [ "$_dj" -lt 130 ]; then
+            _dl_failed=$(( ${_dl_failed:-0} + 1 ))
+        fi
     done
 }
 
@@ -1243,21 +1271,6 @@ provider_chain() {
     return 1
 }
 
-# The API pads a short query with unrelated titles ("man" -> 100 rows, 9 of
-# them carrying the word), so the picker offered junk. Keep the rows whose
-# title contains a query word; if none does, keep the list as served.
-filter_hits() { # $1 = query, $2 = json file, rewritten in place
-    _toks=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
-        | jq -Rrs 'gsub("\\s+"; " ") | split(" ") | map(select(. != ""))')
-    if jq --argjson toks "$_toks" '
-        . as $all
-        | [$all[] | select(.title as $t | ($t | ascii_downcase) as $l
-            | any($toks[]; . as $w | $l | contains($w)))]
-        | if length > 0 then . else $all end' "$2" > "${2}.tmp"; then
-        mv "${2}.tmp" "$2"
-    fi
-}
-
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
@@ -1282,7 +1295,6 @@ cmd_search() {
             provider_chain "$_query" "API unreachable"
             return
         fi
-        filter_hits "$_query" "$tmpfile"
         select_item
         _sel_rc=$?
         if [ "$_sel_rc" -eq 0 ]; then
@@ -1676,6 +1688,10 @@ cmd_anime() {
         _jobs=0
         _waitpids=""
         _done=0
+        _dl_failed=0
+        # worker success markers: the -D history row must name an episode that
+        # actually landed, not the last one submitted
+        : > "$tmpfile5"
         while IFS='	' read -r _ep _occ; do
             if [ -n "$_rstart" ]; then
                 [ "$_ep" -ge "$_rstart" ] 2>/dev/null || continue
@@ -1683,8 +1699,7 @@ cmd_anime() {
             fi
             if [ "$dl_jobs" -gt 1 ]; then
                 quiet_dl=1
-                _hist_ep="$_ep"
-                ( anime_play_episode "$_ep" "$_occ" ) &
+                ( anime_play_episode "$_ep" "$_occ" && printf '%s\n' "$_ep" >> "$tmpfile5" ) &
                 _waitpids="$_waitpids $!"
                 _jobs=$(( _jobs + 1 ))
                 # drain_jobs waits per PID: a bare `wait` loses every status
@@ -1701,7 +1716,8 @@ cmd_anime() {
                 anime_play_episode "$_ep" "$_occ"
                 _rc=$?
                 [ "$_rc" -ge 130 ] && exit "$_rc"
-                [ "$_rc" -eq 0 ] && _hist_ep="$_ep"
+                [ "$_rc" -ne 0 ] && _dl_failed=$(( _dl_failed + 1 ))
+                [ "$_rc" -eq 0 ] && printf '%s\n' "$_ep" >> "$tmpfile5"
                 _done=$(( _done + 1 ))
                 _dl_progress "$_done" "$_total"
             fi
@@ -1711,7 +1727,12 @@ cmd_anime() {
         _dl_progress "$_done" "$_total"
         _waitpids=""
         [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
+        _hist_ep="$(sort -n "$tmpfile5" 2>/dev/null | tail -1)"
         [ -n "${_hist_ep:-}" ] && update_history "$anime_id" "$anime_title" anime 0 "$_hist_ep"
+        if [ "$_dl_failed" -gt 0 ]; then
+            warn "$_dl_failed episode(s) failed."
+            return 1
+        fi
         return
     fi
 
@@ -1833,6 +1854,10 @@ if is_series; then
 
     _si=1
     _done=0
+    _dl_failed=0
+    # worker success markers, "season episode" per line; the history row after
+    # the loop must name the last episode that landed, not the last submitted
+    : > "$tmpfile5"
     while [ "$_si" -le "$_sc" ]; do
         _season_text=$(jq -r ".season_${_si} // empty" "$tmpfile2")
         _ep_list=""
@@ -1857,13 +1882,13 @@ if is_series; then
                     # overlaps the running downloads instead of
                     # serializing behind each batch's wait
                     quiet_dl=1
-                    _hist_si="$_si"; _hist_ep="$_num"
                     ( _r="$(resolve_stream_url "$_url")"
                       if [ -z "$_r" ]; then
                           warn "Episode $_num (S${_si}) unavailable — skipped."
                           exit 0
                       fi
-                      do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
+                      do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}" &&
+                          printf '%s %s\n' "$_si" "$_num" >> "$tmpfile5"
                     ) &
                     _waitpids="$_waitpids $!"
                     _jobs=$(( _jobs + 1 ))
@@ -1910,7 +1935,8 @@ if is_series; then
                     do_download "$_r" "${_safe}/season-${_si}/S${_si}E${_enum}"
                     _rc=$?
                     [ "$_rc" -ge 130 ] && exit "$_rc"
-                    [ "$_rc" -eq 0 ] && { _hist_si="$_si"; _hist_ep="$_num"; }
+                    [ "$_rc" -ne 0 ] && _dl_failed=$(( _dl_failed + 1 ))
+                    [ "$_rc" -eq 0 ] && printf '%s %s\n' "$_si" "$_num" >> "$tmpfile5"
                     _done=$(( _done + 1 ))
                     _dl_progress "$_done" "$_total"
                 fi
@@ -1929,7 +1955,14 @@ if is_series; then
     # -D sets info_only, so prompt_action (the only other place _slug
     # is assigned) never runs — read it here or update_history bails.
     _slug="$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)"
-    [ -n "${_hist_ep:-}" ] && update_history "$_slug" "$_title" series "${_hist_si:-0}" "$_hist_ep"
+    # highest season+episode that reported a zero exit; `sort -n` on "S E"
+    # would stop at the space, so compare both fields in awk
+    _last="$(awk '{ if ($1 > s || ($1 == s && $2 > e)) { s = $1; e = $2 } }
+        END { if (s != "") print s, e }' "$tmpfile5" 2>/dev/null)"
+    if [ -n "$_last" ]; then
+        _hist_si="${_last% *}"; _hist_ep="${_last#* }"
+        update_history "$_slug" "$_title" series "$_hist_si" "$_hist_ep"
+    fi
 
     # Anime-type hicine title (single season) with episodes still
     # missing = their hicine links pointed at a dead bucket. Retry
@@ -1975,7 +2008,19 @@ if is_series; then
                     warn "No episodes found on hianime for '$anime_title'."
                 fi
             fi
+            # recount from disk: the retry may have filled what the main loop
+            # reported as failed, so _dl_failed must not punish a fixed episode
+            _still=0
+            while IFS='	' read -r _num _url _qual _size; do
+                dl_find "${download_dir}/${_safe}/season-1/S1E$(printf '%02d' "$_num")" >/dev/null ||
+                    _still=$(( _still + 1 ))
+            done < "$tmpfile3"
+            _dl_failed="$_still"
         fi
+    fi
+    if [ "$_dl_failed" -gt 0 ]; then
+        warn "$_dl_failed episode(s) failed."
+        return 1
     fi
     # end of the series part — was an unconditional `exit 0` while inline
     # in the case; a return keeps the function callable from any entry point
@@ -2007,6 +2052,9 @@ _mrc=$?
 [ "$_mrc" -ge 130 ] && exit "$_mrc"
 if [ "$_mrc" -ne 0 ]; then
     warn "server-1 download failed."
+else
+    # -D sets info_only, so prompt_action never ran and _slug is unset
+    update_history "$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)" "$_title" movie 0 0
 fi
 }
 
@@ -2153,6 +2201,7 @@ tmpfile=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile2=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile3=$(mktemp /tmp/VICINE.XXXXXX)
 tmpfile4=$(mktemp /tmp/VICINE.XXXXXX)
+tmpfile5=$(mktemp /tmp/VICINE.XXXXXX)
 trap cleanup EXIT
 trap on_sigint INT
 trap on_sighup HUP
@@ -2237,6 +2286,11 @@ esac
 # would print "integer expression expected" per row and silently run serial),
 # page/limit go straight into the browse URL
 case "$dl_jobs" in ""|*[!0-9]*) die "VICINE_DL_JOBS must be a number" ;; esac
+# a typo like 200 would start 200 yt-dlp processes at once
+if [ "$dl_jobs" -gt 16 ]; then
+    warn "VICINE_DL_JOBS capped at 16 (was $dl_jobs)."
+    dl_jobs=16
+fi
 case "$browse_page" in ""|*[!0-9]*) die "--page must be a number" ;; esac
 case "$browse_limit" in ""|*[!0-9]*) die "--limit must be a number" ;; esac
 
@@ -2260,6 +2314,7 @@ dep_ch "grep"
 dep_ch "jq"
 dep_ch "$menu_program"
 case "$player_function" in
+    "") die "No player found. Install mpv or vlc, or set VICINE_PLAYER." ;;
     download) dep_ch_failover "yt-dlp,ffmpeg" >/dev/null || die "Need yt-dlp or ffmpeg for downloads" ;;
     *mpv*) dep_ch mpv ;;
     *iina*)

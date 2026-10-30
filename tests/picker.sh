@@ -9,12 +9,12 @@
 #
 # Usage: sh tests/picker.sh
 
-SCRIPT="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SCRIPT"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
-command -v picker >/dev/null 2>&1 || { echo "picker missing from vicine" >&2; exit 1; }
+SCRIPT="$(dirname "$0")/../vicine"
+load_vicine
+
+need picker
 
 # picker() assigns this on success; initialised so the first failure print can
 # never reference an unset variable

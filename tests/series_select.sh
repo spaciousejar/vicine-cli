@@ -6,16 +6,15 @@
 # real implementations instead of testing sed-extracted copies.
 # Usage: sh tests/series_select.sh
 
-SCRIPT="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SCRIPT"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+SCRIPT="$(dirname "$0")/../vicine"
+load_vicine
 
 # A series/episode count, the "how many did they ask for" narrowing used by
 # both -D flows and their confirm counts, and the episode-number↔count split
 # that episode_loop depends on.
-command -v eps_by_request >/dev/null 2>&1 || _fail "eps_by_request missing from vicine"
+need eps_by_request
 
 LINES='1	a	480p
 2	b	720p

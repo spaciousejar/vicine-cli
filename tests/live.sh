@@ -15,11 +15,10 @@
 # something the parser cannot read IS a failure: that is the drift this
 # test exists to catch.
 
-SRC="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SRC"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+SRC="$(dirname "$0")/../vicine"
+load_vicine
 
 if [ "${VICINE_LIVE:-}" != 1 ]; then
     echo "SKIP (network test — set VICINE_LIVE=1 to run)"
@@ -61,6 +60,37 @@ esac
 [ "$_n" -ge 1 ] || _fail "hicine search returned no rows"
 echo "OK    hicine search            $_n rows"
 
+# A spaced query has to survive the retry cmd_search makes. server-1 matches
+# titles literally: "spider man" answered 0 rows when "spider-man" answered 16.
+# Both go through henc, so a broken encoder shows up here too.
+_q='spider man'
+_rows=0
+for _c in "$_q" "$(printf '%s' "$_q" | tr -s '[:space:]' '-')"; do
+    _r="$(curl -sf --max-time 20 "${API}/api/search/$(henc "$_c")" 2>/dev/null | jq 'length' 2>/dev/null)"
+    case "${_r:-}" in
+        ''|*[!0-9]*) _fail "search for '$_c' did not answer with a JSON array" ;;
+    esac
+    _rows=$(( _rows + _r ))
+done
+[ "$_rows" -ge 1 ] || _fail "neither 'spider man' nor 'spider-man' returned a row"
+echo "OK    hicine spaced query      $_rows rows"
+
+# The resolver: a payload link has to walk to a real stream URL. Walked over
+# the first few items with links so one dead bucket entry does not fail the
+# run — that is exactly what movie_playable does per title.
+quality=best
+_ok=""
+_i=0
+while [ "$_i" -lt 5 ]; do
+    _links="$(printf '%s' "$_hic" | jq -r --argjson i "$_i" '.[$i].links // empty' 2>/dev/null)"
+    _i=$(( _i + 1 ))
+    [ -n "$_links" ] || continue
+    _ok="$(movie_playable "$(parse_links "$_links")" 2>/dev/null)"
+    [ -n "$_ok" ] && break
+done
+[ -n "$_ok" ] || _fail "no hicine link resolved to a playable URL"
+echo "OK    hicine resolver          ${_ok%%\?*}"
+
 # hianime — the anime search. anidb_search dies on a challenge/429 page,
 # which means blocked, not broken.
 _an="$(anidb_search "one piece" 2>&1)"
@@ -82,4 +112,4 @@ _eps="$(anidb_episodes "$_id" 2>/dev/null | grep -c .)"
 [ "${_eps:-0}" -ge 1 ] || _fail "hianime episode list came back empty for $_id"
 echo "OK    hianime episodes         $_eps episodes"
 
-echo "PASS (3 checks)"
+echo "PASS (5 checks)"

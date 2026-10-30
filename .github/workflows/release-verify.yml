@@ -42,6 +42,10 @@ jobs:
 
           check Formula/vicine.rb   "refs/tags/v${ver}.tar.gz" "version ref"
           check Formula/vicine.rb   "sha256 \"$sha\""          "formula sha"
+          # the script and the npm package are bumped by hand: if they drift,
+          # npm ships one version while -V and self-update compare another
+          check vicine              "version_number=\"$ver\""   "script version"
+          check package.json        "\"version\": \"$ver\""     "npm version"
           check bucket/vicine.json  "\"version\": \"$ver\""    "scoop version"
           check bucket/vicine.json  "\"hash\": \"$sha\""        "scoop hash"
           check flake.nix           "version = \"$ver\""        "flake version"

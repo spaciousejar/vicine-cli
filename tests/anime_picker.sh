@@ -7,7 +7,7 @@
 # "select" case.
 # Usage: sh tests/anime_picker.sh
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+. "$(dirname "$0")/lib.sh"
 
 pick() { # $1 = display pick line ("3  14"), list on stdin
     printf '%s\n' "$LIST" | sed -n "$(printf '%s' "$1" | awk '{print $1+0}')p"

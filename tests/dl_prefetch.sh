@@ -14,8 +14,9 @@
 # keep passing after the fix was reverted.
 # Usage: sh tests/dl_prefetch.sh
 
+. "$(dirname "$0")/lib.sh"
+
 SCRIPT="$(dirname "$0")/../vicine"
-_fail() { echo "FAIL: $1" >&2; exit 1; }
 
 # 1. the prefetch's PID must be captured, or nothing can ever reap it
 grep -q '_prepid=\$!' "$SCRIPT" || \

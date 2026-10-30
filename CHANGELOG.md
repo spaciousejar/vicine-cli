@@ -13,11 +13,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty and fell through to anime. `cmd_search()` now retries the miss with the
   whitespace runs joined by hyphens, then dropped entirely, before giving up.
   `tests/search_retry.sh` covers both.
-- The result list no longer carries the API's padding. A short query is padded
-  with unrelated titles — `man` came back with 100 rows, 9 of which contain the
-  word — so the picker offered films that have nothing to do with the query.
-  `filter_hits()` keeps the rows whose title contains a query word, and keeps
-  the served list when none does.
+
+- `-D` reports failed episodes and exits non-zero. A series batch used to exit
+  0 with episodes missing: every worker's status went to the last one reaped.
+  The parallel and serial paths both count failures now, print
+  `N episode(s) failed.`, and return 1. A gap retry that repairs an episode
+  clears its count. `tests/dl_all.sh` covers the contract.
+- The history row names the last episode that actually landed. Parallel
+  workers finish out of order, so the row could record an episode that failed
+  while a later one succeeded.
+- Two `-D` runs no longer lose a history row. `update_history()` takes its
+  lock with `mkdir`, which is atomic, and breaks a lock left behind by a
+  killed run instead of waiting for it forever. `tests/history.sh` covers
+  both.
+- `-D` on a movie records it in history, as the series path already did.
+- The movie picker tries at most three sources and prints
+  `Trying next source...` before the second probe. A bucket full of dead links
+  used to stall a scheduled run with no output.
+- `vicine` with no player installed now says `No player found. Install mpv or
+  vlc, or set VICINE_PLAYER.` The old check ran `dep_ch` on an empty name.
+- `VICINE_DL_JOBS` is capped at 16 with a warning. A value such as `1000`
+  used to start 1000 workers.
+- `install.sh` refuses an unknown flag or a relative path with `usage:` and
+  exit 2. `./install.sh --foo` used to create a `--foo` directory in the
+  current directory and install nothing. `tests/install_args.sh` covers it.
+
+### Changed
+
+- The PPA wait gate polls published amd64 binaries, not sources: a source
+  upload is not an installable package. `scripts/verify-channels.sh` reads
+  the same series list from `ppa.yml` and checks
+  `main/binary-amd64/Packages.gz`, so it sees what `apt` sees.
+- The release check compares the version in `vicine` and `package.json` too,
+  so a tag cannot ship a script that still reports the previous version.
+- The 24 self-checks share `tests/lib.sh` (`_fail`, `load_vicine`, `need`).
 
 ## [1.7.4] - 2026-10-29
 ### Security

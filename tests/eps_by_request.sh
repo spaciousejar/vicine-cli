@@ -5,10 +5,10 @@
 #
 # The suite sources the real script (VICINE_LIB=1 vicine).
 
-VICINE_LIB=1 . "$(dirname "$0")/../vicine"
-command -v eps_by_request >/dev/null 2>&1 || { echo "eps_by_request missing" >&2; exit 1; }
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+load_vicine
+need eps_by_request
 
 LINES='1	https://a/1.mp4	480p
 2	https://a/2.mp4	720p

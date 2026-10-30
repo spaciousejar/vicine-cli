@@ -14,8 +14,10 @@
 OWNER="spaciousejar"
 REPO="vicine-cli"
 TAP_REPO="homebrew-vicine-cli"
-# series the PPA workflow uploads to (keep in sync with .github/workflows/ppa.yml)
-PPA_SERIES="resolute noble"
+# Series the PPA workflow uploads to. One source: the job env in ppa.yml.
+PPA_YML="$(dirname "$0")/../.github/workflows/ppa.yml"
+PPA_SERIES="$(sed -n 's/^ *PPA_SERIES: *"\(.*\)"/\1/p' "$PPA_YML" 2>/dev/null | head -1)"
+[ -n "$PPA_SERIES" ] || { echo "cannot read PPA_SERIES from $PPA_YML" >&2; exit 2; }
 
 ver="${1:-}"
 wait_min=0
@@ -92,7 +94,10 @@ run_checks() {
     _v="$(get "https://raw.githubusercontent.com/$OWNER/$REPO/master/flake.nix" | sed -n 's/^ *version = "\([^"]*\)".*/\1/p')"
     check "nix flake" "$ver" "$_v"
 
-    # Ubuntu PPA: the dist has to exist AND list this version
+    # Ubuntu PPA: the series has to exist AND serve this version. Read the
+    # binary index, not binary-all (404 on Launchpad) and not the raw
+    # version (it carries a -1 Debian revision). A published source is not
+    # enough: 1.7.4 published as a source while apt still served 1.7.3.
     for _series in $PPA_SERIES; do
         _base="https://ppa.launchpadcontent.net/$OWNER/vicine/ubuntu/dists/$_series"
         _c="$(code "$_base/InRelease")"
@@ -101,7 +106,8 @@ run_checks() {
             fail=1
             continue
         fi
-        _v="$(get "$_base/main/binary-all/Packages" | sed -n 's/^Version: //p' | head -1)"
+        _v="$(get "$_base/main/binary-amd64/Packages.gz" | gzip -dc 2>/dev/null \
+            | sed -n 's/^Version: //p' | sed 's/-[0-9]*$//' | head -1)"
         check "ppa $_series" "$ver" "$_v"
     done
 }

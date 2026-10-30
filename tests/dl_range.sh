@@ -11,11 +11,10 @@
 # it was asked to play, so the assertion is on which numbers actually ran.
 # Usage: sh tests/dl_range.sh
 
-VICINE_LIB=1 . "$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-command -v episode_loop >/dev/null 2>&1 || { echo "episode_loop missing" >&2; exit 1; }
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+load_vicine
+need episode_loop
 
 # quiet the chatter the loop prints on stdout — it would pollute the captures
 info() { :; }

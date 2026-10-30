@@ -6,13 +6,12 @@
 # statically because the config block sits after the VICINE_LIB early return.
 # Usage: sh tests/anime_plumbing.sh
 
-SRC="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SRC"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
-command -v zoko_xor >/dev/null 2>&1 || _fail "zoko_xor missing from vicine"
-command -v anime_pick_quality >/dev/null 2>&1 || _fail "anime_pick_quality missing from vicine"
+SRC="$(dirname "$0")/../vicine"
+load_vicine
+
+need zoko_xor anime_pick_quality
 
 # Endpoints are assembled as ${tmpl%"%s"}$value, so each template must end in
 # exactly one literal %s. A second %s (or a stray %) would silently shift the

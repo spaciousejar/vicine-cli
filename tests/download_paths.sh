@@ -7,14 +7,11 @@
 # The suite sources the real script (VICINE_LIB=1), so the test can never
 # silently test a stale copy.
 
-SCRIPT="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SCRIPT"
-for fn in check_stream_url dl_find sanitize; do
-    command -v "$fn" >/dev/null 2>&1 || { echo "$fn missing from vicine" >&2; exit 1; }
-done
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+SCRIPT="$(dirname "$0")/../vicine"
+load_vicine
+need check_stream_url dl_find sanitize
 
 # minimal stand-ins for the script's globals the guards touch
 die() { echo "  $1"; return 1; }

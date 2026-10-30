@@ -6,11 +6,11 @@
 # line; and the destructive commands default to no.
 # Usage: sh tests/provider_input.sh
 
+. "$(dirname "$0")/lib.sh"
+
 SRC="$(cd "$(dirname "$0")/.." && pwd)/vicine"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-prov.XXXXXX")"
 marker="$tmp/pwned"
-
-_fail() { echo "FAIL: $1" >&2; exit 1; }
 
 # curl stand-in: serves canned token maps and redirects, keyed by $POC_MODE
 cat > "$tmp/curl" <<'EOF'

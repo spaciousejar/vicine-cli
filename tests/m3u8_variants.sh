@@ -6,10 +6,10 @@
 # the suite sources the real script (VICINE_LIB=1), so it can never silently
 # test a stale copy.
 
-VICINE_LIB=1 . "$(dirname "$0")/../vicine"
-command -v anime_variants >/dev/null 2>&1 || { echo "anime_variants missing" >&2; exit 1; }
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+load_vicine
+need anime_variants
 
 # 1. A RESOLUTION line labels its variant; a RESOLUTION-less variant must
 #    NOT inherit the previous variant's resolution and falls back to its

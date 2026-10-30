@@ -5,8 +5,9 @@
 # ("Re: Zero" sat on "Searching:" for minutes behind a stalling API).
 # Usage: sh tests/api_timeouts.sh
 
+. "$(dirname "$0")/lib.sh"
+
 SCRIPT="$(dirname "$0")/../vicine"
-_fail() { echo "FAIL: $1" >&2; exit 1; }
 
 # 1. catalogue fetches (trending/recent/browse/stats/history) are bounded
 grep -q '\$curl_exe -sf --max-time 20 "\${API}\${1}"' "$SCRIPT" \

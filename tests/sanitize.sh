@@ -3,10 +3,11 @@
 # #43 path-escape fix. Had zero coverage before issue #53.
 # Usage: sh tests/sanitize.sh
 
-VICINE_LIB=1 . "$(dirname "$0")/../vicine"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
-command -v sanitize >/dev/null 2>&1 || { echo "sanitize missing from vicine" >&2; exit 1; }
+load_vicine
+
+need sanitize
 
 [ "$(sanitize 'a/b')" = "ab" ] \
     || _fail "slash not stripped: $(sanitize 'a/b')"

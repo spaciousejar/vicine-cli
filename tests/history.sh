@@ -3,14 +3,14 @@
 # between runs. It had no coverage at all.
 # Usage: sh tests/history.sh
 
-SCRIPT="$(dirname "$0")/../vicine"
-# shellcheck source=/dev/null
-VICINE_LIB=1 . "$SCRIPT"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+SCRIPT="$(dirname "$0")/../vicine"
+load_vicine
+
 # mac/BSD wc pads its output with spaces; GNU does not. tr both to be portable.
 _wc() { wc -l < "$1" | tr -d ' '; }
-command -v update_history >/dev/null 2>&1 || { echo "update_history missing from vicine" >&2; exit 1; }
+need update_history
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-hist.XXXXXX")"
 histfile="$tmp/history"
@@ -52,5 +52,25 @@ update_history "" "No slug" movie 0 0
 grep -qF 'mktemp "$histfile.tmp.XXXXXX"' "$SCRIPT" \
     || _fail "update_history stages through a fixed temp name again"
 
+# 8 writers at once: the read-modify-write is locked, so every row survives
+# (measured before the lock: 8 writers left 1 to 2 rows)
+_before="$(_wc "$histfile")"
+_i=1
+while [ "$_i" -le 8 ]; do
+    ( update_history "conc-$_i" "C$_i" movie 0 0 ) &
+    _i=$(( _i + 1 ))
+done
+wait
+[ "$(_wc "$histfile")" = "$(( _before + 8 ))" ] \
+    || _fail "concurrent writers lost rows: $(_wc "$histfile") of $(( _before + 8 ))"
+
+# a lock left behind by a killed process must not block every later write
+mkdir -p "$histfile.lock"
+printf '%s\n' 999999 > "$histfile.lock/pid"
+update_history "after-stale" "Stale" movie 0 0
+[ "$(cut -f1 "$histfile" | tail -1)" = "after-stale" ] \
+    || _fail "a stale lock blocked update_history"
+[ -d "$histfile.lock" ] && _fail "update_history left its lock behind"
+
 rm -rf "$tmp"
-echo "PASS (9 checks)"
+echo "PASS (11 checks)"

@@ -10,10 +10,11 @@
 # probe is replaced by a list of "which candidates are live".
 # Usage: sh tests/season_zip.sh
 
-VICINE_LIB=1 . "$(dirname "$0")/../vicine"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
-command -v play_season_zip >/dev/null 2>&1 || _fail "play_season_zip missing from vicine"
+load_vicine
+
+need play_season_zip
 
 # Globals play_season_zip reads. Sourcing with VICINE_LIB stops before the
 # Main section, so the mktemp/dir setup there never ran — the suite makes its

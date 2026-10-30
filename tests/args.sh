@@ -5,9 +5,9 @@
 # Usage: sh tests/args.sh   (override the target with VICINE="bash ../vicine")
 # so the shell matrix can exercise the real script under bash/dash.
 
-VICINE="${VICINE:-"$(dirname "$0")/../vicine"}"
+. "$(dirname "$0")/lib.sh"
 
-_fail() { echo "FAIL: $1" >&2; exit 1; }
+VICINE="${VICINE:-"$(dirname "$0")/../vicine"}"
 
 # runs a broken invocation; returns via _out/_rc
 check() { # $1 = args, $2 = expected message fragment

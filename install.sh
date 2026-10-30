@@ -36,6 +36,12 @@ install_deps() {
 }
 
 need=""
+# Only --no-deps or an absolute directory: a typo like --foo used to become
+# the target and mkdir -p created a stray directory.
+case "${1:-}" in
+    ""|--no-deps|/*) ;;
+    *) echo "usage: $0 [--no-deps | /absolute/install/dir]" >&2; exit 2 ;;
+esac
 for dep in $deps; do
     command -v "$dep" >/dev/null 2>&1 || need="$need $dep"
 done
