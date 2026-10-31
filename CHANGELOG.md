@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-11-01
+### Fixed
+
+- `parse_episodes()` resolves providers that pack the whole link tuple
+  (`empty,empty,https://host/ID,empty,720p`) into the `vcloud` field. The old
+  check skipped any line reading `vcloud=empty`, which silently dropped a
+  real address embedded in the packed value; those episodes now resolve by
+  rebuilding the worker URL around the address token, and only a tuple with
+  no address at all is treated as a dead stub.
+  `tests/portability.sh` covers the packed form.
+
+- `-i` on a series prints one episode-count row per season. The season text
+  is multi-line, so `read -r` split it and printed one row per episode line;
+  the count now reads each season with a single `jq` call.
+
+- An episode whose provider does not report a size no longer prints a
+  dangling `"Episode 1 (1080p, )"`; the size only renders when present.
+
+- The verify-channels probe retries a dropped fetch once before marking a
+  channel stale, so one transient network error no longer fails a release
+  verification run.
+
 ## [1.7.5] - 2026-10-30
 ### Fixed
 
