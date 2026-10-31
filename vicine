@@ -194,7 +194,7 @@ api_fetch() {
     # $1 = endpoint, $2 = output file
     # bounded: provider_chain can only fire on curl FAILURE, so an unbounded
     # request hangs the whole interactive search instead of falling through
-    $curl_exe -sf --max-time 20 "${API}${1}" -o "$2" || die "API request failed: ${1}"
+    $curl_exe $curl_to -sf --max-time 20 "${API}${1}" -o "$2" || die "API request failed: ${1}"
 }
 
 # ─── URL resolution ─────────────────────────────────────────────────────────
@@ -225,7 +225,7 @@ resolve_stream_url() {
     _tokens_json=""
     _attempt=1
     while [ "$_attempt" -le 5 ]; do
-        _tokens_json="$($curl_exe -sf --max-time 10 "${_base}/api/links?vcloud=${_vcloud_val}")"
+        _tokens_json="$($curl_exe $curl_to -sf --max-time 10 "${_base}/api/links?vcloud=${_vcloud_val}")"
         printf "%s" "$_tokens_json" | grep -q '"tokens":{}' || [ -z "$_tokens_json" ] || break
         _attempt=$(( _attempt + 1 ))
         sleep 0.5
@@ -246,7 +246,7 @@ resolve_stream_url() {
     _sig="$(printf "%s" "$_tokens_json" | jq -r --arg t "$_type" '.tokens[$t].sig // empty' 2>/dev/null)"
 
     _go_url="${_base}/go?type=${_type}&vcloud=${_vcloud_val}&ts=${_ts}&sig=${_sig}"
-    _real_url="$($curl_exe -sIL --max-time 10 "$_go_url" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's/^[Ll]ocation: *//;s/\r//')"
+    _real_url="$($curl_exe $curl_to -sIL --max-time 10 "$_go_url" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's/^[Ll]ocation: *//;s/\r//')"
     # the Location header is remote text too; a non-http value would reach curl
     # as an option (--config=FILE) at the next probe. Fall back to the worker.
     is_http_url "$_real_url" || _real_url=""
@@ -368,8 +368,9 @@ movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
               m = (q != "best" && index(tolower($2), tolower(q))) ? 0 : 1
               printf "%s\t%s\t%s\n", m, 9999 - r, $1 }' |
         sort -n | cut -f3 |
-        # 3 is the cap: each dead candidate costs ~40 s (token, redirect,
-        # body probe), so a five-dead-variant title looked hung for a minute
+        # 3 is the cap: each dead candidate costs ~30 s worst case (token,
+        # redirect, body probe), so a five-dead-variant title no longer
+        # looked hung for a minute
         head -3 |
         while IFS= read -r _mu; do
             [ -n "$_mu" ] || continue
@@ -381,7 +382,7 @@ movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
             # /u/ pages do), JSON/JSONP, and text error pages count too.
             # Body-sniff the first bytes — same reject-set _stage_ok uses —
             # instead of trusting the status code.
-            _body="$($curl_exe -s -r 0-31 --max-time 20 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
+            _body="$($curl_exe $curl_to -s -r 0-31 --max-time 10 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
             case "${_body:-}" in
                 "") warn "Source unreachable — next quality." >&2 ;;
                 \<\!doc*|\<html*|\<\?xml*|\{*|\[*)
@@ -810,9 +811,9 @@ do_download() {
     case "$_url" in
         http://*|https://*)
             if [ -n "$_ref" ]; then
-                _probe="$($curl_exe -sfL -r 0-0 -o /dev/null --max-time 20 -e "$_ref" -w '%{http_code}' "$_url" 2>/dev/null)"
+                _probe="$($curl_exe $curl_to -sfL -r 0-0 -o /dev/null --max-time 10 -e "$_ref" -w '%{http_code}' "$_url" 2>/dev/null)"
             else
-                _probe="$($curl_exe -sfL -r 0-0 -o /dev/null --max-time 20 -w '%{http_code}' "$_url" 2>/dev/null)"
+                _probe="$($curl_exe $curl_to -sfL -r 0-0 -o /dev/null --max-time 10 -w '%{http_code}' "$_url" 2>/dev/null)"
             fi
             case "$_probe" in
                 401|403|404|410)
@@ -919,10 +920,10 @@ do_download() {
     # curl: -f makes HTTP errors (403/404) fail instead of saving the error
     # body and claiming success
     if [ -n "$_ref" ]; then
-        curl -fL -e "$_ref" --progress-bar -o "$_pt" "$_url"
+        curl $curl_to -fL -e "$_ref" --progress-bar -o "$_pt" "$_url"
         _rc=$?
     else
-        curl -fL --progress-bar -o "$_pt" "$_url"
+        curl $curl_to -fL --progress-bar -o "$_pt" "$_url"
         _rc=$?
     fi
     if [ "$_rc" -ge 130 ]; then
@@ -1093,7 +1094,7 @@ play_season_zip() {
         _try=1
         while [ "$_try" -le 3 ]; do
             _r="$(resolve_stream_url "$_u")"
-            if [ -n "$_r" ] && curl -sfL -r 0-0 -o /dev/null --max-time 30 "$_r" 2>/dev/null; then
+            if [ -n "$_r" ] && curl $curl_to -sfL -r 0-0 -o /dev/null --max-time 30 "$_r" 2>/dev/null; then
                 _resolved="$_r"
                 _label="$(printf "%s" "$_cand" | cut -d',' -f2- | sed 's/,[^,]*$//' | sed 's/^ *//;s/ *$//')"
                 break
@@ -1321,7 +1322,7 @@ cmd_search() {
     [ -n "$_joined" ] && set -- "$@" "$_joined"
     for _cand in "$@"; do
         [ "$_cand" != "$_query" ] && info "No match; retrying: $_cand"
-        if ! $curl_exe -sf --max-time 20 "${API}/api/search/$(henc "$_cand")" -o "$tmpfile"; then
+        if ! $curl_exe $curl_to -sf --max-time 20 "${API}/api/search/$(henc "$_cand")" -o "$tmpfile"; then
             # die before the chain: an unreachable API is not the same as a miss,
             # and -i must not turn a dead endpoint into a full fallback search
             [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
@@ -1390,7 +1391,7 @@ cmd_stats() {
 # ─── Anime provider
 
 anidb_curl() {
-    $curl_exe -sL -A "$vicine_ua" --max-time 10 "$@"
+    $curl_exe $curl_to -sL -A "$vicine_ua" --max-time 10 "$@"
 }
 
 # search → lines "anime_id<TAB>title"
@@ -1460,7 +1461,7 @@ zoko_src_of() {
 anime_cdn_curl() {
     # provider-supplied embed/master URLs: a leading "--" would be a curl option
     is_http_url "$1" || return 1
-    $curl_exe -sL -A "$vicine_ua" -e "$anime_embed_ref" --max-time 15 "$@"
+    $curl_exe $curl_to -sL -A "$vicine_ua" -e "$anime_embed_ref" --max-time 15 "$@"
 }
 
 # m3u8 variant parser: reads a master playlist on stdin, prints "RESp>URL"
@@ -2113,7 +2114,7 @@ update_script() {
         ""|*..*|*%*) die "Refusing update path (dot or encoded segment): $_repo" ;;
     esac
     info "Checking for updates..."
-    _new="$(curl -sfL --max-time 20 "$_repo")" || die "Update failed: cannot fetch $_repo"
+    _new="$(curl $curl_to -sfL --max-time 20 "$_repo")" || die "Update failed: cannot fetch $_repo"
     _new_ver="$(printf "%s" "$_new" | sed -n 's/^version_number="\([^"]*\)"/\1/p')"
     [ -z "$_new_ver" ] && die "Invalid response from update server."
 
@@ -2242,6 +2243,10 @@ trap on_sigterm TERM
 
 # Curl
 curl_exe="curl"
+# fail fast on dead hosts: a stalled connect otherwise burns the whole
+# --max-time before the request fails (search, source walk, dead-link probe
+# all sit on it); the transfer budget (--max-time) still applies after connect
+curl_to="--connect-timeout 4"
 command -v curl >/dev/null 2>&1 || die "curl not found"
 
 # Player detection

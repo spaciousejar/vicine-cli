@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloader — an external downloader would run once per fragment there.
   `tests/aria2c.sh` covers all three branches on a stub yt-dlp.
 
+### Changed
+
+- Every direct curl call now carries a 4-second connect gate (`$curl_to`).
+  A dead host previously burned its whole `--max-time` (10–30 s) on a stalled
+  connect: search, the source walk, the dead-link probe and the update check
+  all sit on it. The transfer budget is unchanged after connect.
+- The two per-candidate probes lost time in the source walk: the 32-byte
+  body sniff and the dead-link range probe went from `--max-time 20` to
+  `--max-time 10` (a candidate that cannot serve 32 bytes in 10 s is walked
+  past either way), so a five-dead-variant title is ~30 s worst case instead
+  of ~40 s per candidate.
+
 ## [1.7.6] - 2026-11-01
 ### Fixed
 
