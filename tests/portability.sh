@@ -40,8 +40,16 @@ _e="$(parse_episodes "$_season")"
 [ "$_e" = "$(printf '1\thttps://cdn/b.m3u8\t720p\t480p')" ] ||
     _fail "parse_episodes returned: $_e"
 
+# a provider that packs the source page's whole link tuple into vcloud: the
+# worker resolves only the URL token, and a tuple with no address is a stub
+_packed='Episode 1 : https://w.example/?vcloud=empty,empty,empty,https://cdn/abc,empty,720p : https://w.example/?vcloud=empty,empty,empty,https://cdn/def,empty,1080p
+Episode 2 : https://w.example/?vcloud=empty,empty,empty'
+_e="$(parse_episodes "$_packed")"
+[ "$_e" = "$(printf '1\thttps://w.example/?vcloud=https://cdn/def\t1080p\t')" ] ||
+    _fail "parse_episodes (packed vcloud) returned: $_e"
+
 _l="$(parse_links 'https://cdn/x.m3u8, Some Movie, 1.2GB')"
 [ "$_l" = "$(printf 'https://cdn/x.m3u8\tSome Movie\t1.2GB')" ] ||
     _fail "parse_links returned: $_l"
 
-echo "PASS (5 checks)"
+echo "PASS (6 checks)"

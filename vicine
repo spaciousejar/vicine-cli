@@ -288,8 +288,10 @@ parse_episodes() {
     printf "%s\n" "$1" | while IFS= read -r line; do
         line="$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         printf "%s" "$line" | grep -q '^Episode' || continue
-        # skip dead stub entries
-        printf "%s" "$line" | grep -q 'vcloud=empty' && continue
+        # packed vcloud tuple ("empty,empty,...,https://host/ID,empty,720p"):
+        # a dead stub unless one of the fields is a real address
+        _packed=""
+        printf "%s" "$line" | grep -q 'vcloud=empty' && _packed=1
         _ep_num="$(printf "%s" "$line" | sed 's/Episode \([0-9]*\) :.*/\1/')"
         # normalize "03" → "3" so -e 3 matches
         _ep_num="$(printf "%s" "$_ep_num" | sed 's/^0*\(.\)/\1/')"
@@ -300,9 +302,20 @@ parse_episodes() {
             [ -n "$_match" ] && _best="$_match"
         fi
         _url="$(printf "%s" "$_best" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        _rest="$(printf "%s" "$_best" | cut -d',' -f2-)"
-        _qual="$(printf "%s" "$_rest" | sed 's/^.*,//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
-        _size="$(printf "%s" "$_rest" | sed 's/,[^,]*$//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
+        if [ -n "$_packed" ]; then
+            # the worker resolves only the URL token, not the whole tuple, so
+            # rebuild the worker URL around the one real address
+            _tok="$(printf "%s" "${_best#*vcloud=}" | tr ',' '\n' \
+                | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -m1 '^https\?://')"
+            [ -n "$_tok" ] || continue
+            _url="${_url%%\?*}?vcloud=${_tok}"
+            _qual="$(printf "%s" "$_best" | sed 's/^.*,//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
+            _size=""
+        else
+            _rest="$(printf "%s" "$_best" | cut -d',' -f2-)"
+            _qual="$(printf "%s" "$_rest" | sed 's/^.*,//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
+            _size="$(printf "%s" "$_rest" | sed 's/,[^,]*$//;s/^[[:space:]]*//;s/[[:space:]]*$//')"
+        fi
         printf "%s\t%s\t%s\t%s\n" "$_ep_num" "$_url" "$_qual" "$_size"
     done
 }
@@ -445,10 +458,18 @@ show_info() {
         done
     fi
 
-    season_fields | while IFS='	' read -r _sn _season; do
-        _ep_count=$(printf "%s" "$_season" | grep -c '^Episode')
-        printf "\n"
-        printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s episodes)${C_RESET}\n" "$_sn" "$_ep_count"
+    # one jq read per season, not season_fields: a season text is multi-line,
+    # so read -r split it and printed one row per episode line
+    _sc=$(season_count)
+    _sn=1
+    while [ "$_sn" -le "$_sc" ]; do
+        _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
+        if [ -n "$_season_text" ]; then
+            _ep_count=$(parse_episodes "$_season_text" "$quality" | grep -c . || true)
+            printf "\n"
+            printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s episodes)${C_RESET}\n" "$_sn" "$_ep_count"
+        fi
+        _sn=$(( _sn + 1 ))
     done
 
     printf "\n"
@@ -510,7 +531,8 @@ get_episode_url() {
 # Get episode display name by number
 get_episode_name() {
     _num="$1"
-    printf '%s' "$_ep_list" | awk -F '\t' -v n="$_num" '$1==n && $1 ~ /^[0-9]+$/ {printf "Episode %s (%s, %s)\n", $1, $3, $4}'
+    # no size (packed-tuple providers) must not leave a dangling ", )"
+    printf '%s' "$_ep_list" | awk -F '\t' -v n="$_num" '$1==n && $1 ~ /^[0-9]+$/ {printf "Episode %s (%s%s)\n", $1, $3, ($4 == "" ? "" : ", " $4)}'
 }
 
 # Narrow "id<TAB>..." lines to the -e request (N, N-M, -1); echoes the filter
