@@ -21,6 +21,7 @@ need do_download
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-aria.XXXXXX")"
 download_dir="$(mktemp -d "${TMPDIR:-/tmp}/vicine-dl.XXXXXX")"
+# shellcheck disable=SC2034  # global the sourced do_download reads
 curl_exe="curl"   # dead-link probe; the URL refuses on the spot, no network needed
 
 # one bin dir per case: identical except for the aria2c stub
