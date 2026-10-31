@@ -5,8 +5,13 @@
 # forwards the referer/cookie headers). A playlist manifest keeps the native
 # downloader: on an external downloader yt-dlp runs one aria2c process per
 # fragment, which is slower than the -N 16 fragment loop.
-# The stub yt-dlp captures its command line, so each branch asserts on the
-# real invocation, not on grepping the source.
+#
+# Each case runs with a FULLY controlled PATH (a symlink farm of the tools
+# the download path touches, plus a yt-dlp stub that captures its argv and
+# stages a fake file). PATH alone decides whether do_download can see an
+# aria2c: a host that ships one (GitHub runner images do) must not turn the
+# no-aria2c case into a different contract.
+#
 # Usage: sh tests/aria2c.sh
 
 . "$(dirname "$0")/lib.sh"
@@ -16,16 +21,19 @@ need do_download
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-aria.XXXXXX")"
 download_dir="$(mktemp -d "${TMPDIR:-/tmp}/vicine-dl.XXXXXX")"
-quality="best"
 curl_exe="curl"   # dead-link probe; the URL refuses on the spot, no network needed
 
-yes_bin="$(mktemp -d "${TMPDIR:-/tmp}/vicine-ya.XXXXXX")"   # aria2c on PATH
-no_bin="$(mktemp -d "${TMPDIR:-/tmp}/vicine-na.XXXXXX")"    # aria2c absent
-
-make_yt() { # $1 = target dir for the yt-dlp stub
+# one bin dir per case: identical except for the aria2c stub
+make_harness() { # $1 = dir, $2 = with aria2c ("yes"/"no")
+    mkdir "$1"
+    # the external tools the download path can call; everything it asserts on
+    # came out of do_download's real branches, not assumptions
+    for _t in dirname basename mkdir sed tr cksum cut head rm mv wc curl; do
+        ln -s "$(command -v "$_t")" "$1/$_t"
+    done
     cat > "$1/yt-dlp" <<'YTD'
 #!/bin/sh
-args="$*"        # captured before the loop: shift consumes the argument list
+args="$*"        # captured before the loop: the -o scan consumes the args
 while [ "$#" -gt 0 ]; do
     if [ "$1" = "-o" ]; then printf '\x1a\x45\xdf\xa3staged-fake' > "$2"; fi
     shift
@@ -34,41 +42,46 @@ printf '%s\n' "$args" > "$CAP"
 exit 0
 YTD
     chmod +x "$1/yt-dlp"
+    if [ "$2" = yes ]; then
+        printf '#!/bin/sh\nexit 0\n' > "$1/aria2c"
+        chmod +x "$1/aria2c"
+    fi
 }
-make_yt "$yes_bin"
-make_yt "$no_bin"
-printf '#!/bin/sh\nexit 0\n' > "$yes_bin/aria2c"
-chmod +x "$yes_bin/aria2c"
 
-run_dl() { # $1 = bin dir on PATH, $2 = URL, $3 = title, $4 = capture; each
-    # case gets its own title, or an earlier saved file makes the later ones
-    # bail at "Already exists" and the stub never runs
-    CAP="$4" PATH="$1:$PATH" do_download "$2" "$3" ""
-    [ "$?" = 0 ] || _fail "$3: download did not succeed"
+yes_bin="$tmp/with-aria2c"
+no_bin="$tmp/without-aria2c"
+make_harness "$yes_bin" yes
+make_harness "$no_bin" no
+
+cap_all() { # $1 = capture file; join the argv lines for substring checks
+    tr '\n' ' ' < "$1"
 }
 
 # 1. aria2c installed + direct .mp4 URL -> --downloader aria2c is attached
-run_dl "$yes_bin" "https://127.0.0.1:9/f.mp4" "Movie Direct" "$tmp/cap1"
-case "$(tr '\n' ' ' < "$tmp/cap1")" in
+CAP="$tmp/cap1" PATH="$yes_bin" do_download "https://127.0.0.1:9/f.mp4" "Movie Direct" ""
+[ "$?" = 0 ] || _fail "direct-file download with aria2c did not succeed"
+case "$(cap_all "$tmp/cap1")" in
     *'--downloader aria2c'*) ;;
     *) _fail "aria2c installed and a direct .mp4 URL: --downloader aria2c missing from the yt-dlp invocation" ;;
 esac
 
 # 2. aria2c installed + .m3u8 manifest -> stays on the native fragment downloader
-run_dl "$yes_bin" "https://127.0.0.1:9/f.m3u8" "Movie Stream" "$tmp/cap2"
-[ -s "$tmp/cap2" ] || _fail "m3u8 case never re-ran the stub (an earlier case left its file behind)"
-case "$(tr '\n' ' ' < "$tmp/cap2")" in
+CAP="$tmp/cap2" PATH="$yes_bin" do_download "https://127.0.0.1:9/f.m3u8" "Movie Stream" ""
+[ "$?" = 0 ] || _fail "m3u8 download did not succeed"
+[ -s "$tmp/cap2" ] || _fail "m3u8 case never ran the stub (the download could not start)"
+case "$(cap_all "$tmp/cap2")" in
     *'--downloader'*) _fail "a .m3u8 manifest ran with --downloader: the external downloader runs once per fragment" ;;
     *) ;;
 esac
 
-# 3. no aria2c on PATH -> the single-connection path is used unchanged
-run_dl "$no_bin" "https://127.0.0.1:9/f.mp4" "Movie Plain" "$tmp/cap3"
-[ -s "$tmp/cap3" ] || _fail "no-aria2c case never re-ran the stub (an earlier case left its file behind)"
-case "$(tr '\n' ' ' < "$tmp/cap3")" in
-    *'--downloader'*) _fail "--downloader aria2c ran while aria2c is not on PATH" ;;
+# 3. no aria2c on a controlled PATH -> the single-connection path is unchanged
+CAP="$tmp/cap3" PATH="$no_bin" do_download "https://127.0.0.1:9/f.mp4" "Movie Plain" ""
+[ "$?" = 0 ] || _fail "direct-file download without aria2c did not succeed"
+[ -s "$tmp/cap3" ] || _fail "no-aria2c case never ran the stub (the download could not start)"
+case "$(cap_all "$tmp/cap3")" in
+    *'--downloader'*) _fail "--downloader aria2c ran while no aria2c is on this PATH" ;;
     *) ;;
 esac
 
-rm -rf "$tmp" "$yes_bin" "$no_bin" "$download_dir"
+rm -rf "$tmp" "$download_dir"
 echo "PASS (3 checks)"
