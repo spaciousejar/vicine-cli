@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- Direct-file downloads use aria2c when it is installed: yt-dlp's built-in
+  downloader fetches a direct URL on one connection, while `--downloader aria2c`
+  splits it into 16 range requests and forwards the referer/cookie headers.
+  `-N 16` already parallelises HLS/DASH, so playlists keep the native fragment
+  downloader — an external downloader would run once per fragment there.
+  `tests/aria2c.sh` covers all three branches on a stub yt-dlp.
 
 ## [1.7.6] - 2026-11-01
 ### Fixed

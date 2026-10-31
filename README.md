@@ -202,7 +202,7 @@ self-checks (under `sh`, `dash` and `bash`) on every push and PR.
 | `curl` | `ffmpeg` (fallback downloader when yt-dlp is absent) |
 | `jq` | `vlc` |
 | `sed`, `grep`, `awk` | `iina` (macOS) |
-| `base64`, `od` (anime provider) | |
+| `base64`, `od` (anime provider) | `aria2c` (16-connection download of direct links) |
 | `fzf` (or `rofi`/`dmenu`) | |
 | `mpv` (or `iina` on macOS) | |
 | `yt-dlp` (downloads) | |

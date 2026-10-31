@@ -833,6 +833,17 @@ do_download() {
     # the feedback there instead.
     _yt="--no-warnings --quiet"
     if [ -n "$quiet_dl" ]; then _yt="$_yt --no-progress"; else _yt="$_yt --progress"; fi
+    # -N 16 above parallelises HLS/DASH fragments, but a direct-file URL goes
+    # through yt-dlp's built-in downloader on one connection. aria2c (when
+    # installed) splits those into 16 range requests — yt-dlp hardcodes
+    # -x16 -s16 for it and forwards the referer/cookie headers — so attach it
+    # to direct URLs only: on a playlist manifest the external downloader
+    # runs one aria2c process per fragment, which is slower than the native
+    # -N loop.
+    case "$_url" in *.m3u8*|*.mpd*) ;; *)
+        command -v aria2c >/dev/null 2>&1 && _yt="$_yt --downloader aria2c"
+        ;;
+    esac
     # check_stream_url above already refused anything that is not http(s), so
     # there is no local-manifest branch here — the URL is used as-is
     if command -v yt-dlp >/dev/null 2>&1; then

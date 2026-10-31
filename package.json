@@ -25,6 +25,7 @@
   ],
   "optionalSystemDeps": [
     "vlc",
+    "aria2c",
     "iina",
     "yt-dlp",
     "ffmpeg",
