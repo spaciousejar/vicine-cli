@@ -1,23 +1,18 @@
 #!/bin/sh
 # Verify that a published version really landed in every distribution
 # channel. The release workflows can be green while a channel holds nothing
-# — the Ubuntu PPA published nothing for months behind a green workflow, and
-# nothing noticed until a user tried to apt install it.
+# — a channel can silently keep serving the previous release.
 #
 #   sh scripts/verify-channels.sh 1.7.2
 #   sh scripts/verify-channels.sh 1.7.2 --wait 20   # retry for 20 minutes
 #
-# --wait exists because npm, the AUR and Launchpad publish asynchronously: a
+# --wait exists because npm, the AUR and Homebrew publish asynchronously: a
 # tag push can be minutes ahead of the artifact. Exits 1 if any channel is
 # still wrong when the wait is over.
 
 OWNER="spaciousejar"
 REPO="vicine-cli"
 TAP_REPO="homebrew-vicine-cli"
-# Series the PPA workflow uploads to. One source: the job env in ppa.yml.
-PPA_YML="$(dirname "$0")/../.github/workflows/ppa.yml"
-PPA_SERIES="$(sed -n 's/^ *PPA_SERIES: *"\(.*\)"/\1/p' "$PPA_YML" 2>/dev/null | head -1)"
-[ -n "$PPA_SERIES" ] || { echo "cannot read PPA_SERIES from $PPA_YML" >&2; exit 2; }
 
 ver="${1:-}"
 wait_min=0
@@ -99,22 +94,6 @@ run_checks() {
     _v="$(get "https://raw.githubusercontent.com/$OWNER/$REPO/master/flake.nix" | sed -n 's/^ *version = "\([^"]*\)".*/\1/p')"
     check "nix flake" "$ver" "$_v"
 
-    # Ubuntu PPA: the series has to exist AND serve this version. Read the
-    # binary index, not binary-all (404 on Launchpad) and not the raw
-    # version (it carries a -1 Debian revision). A published source is not
-    # enough: 1.7.4 published as a source while apt still served 1.7.3.
-    for _series in $PPA_SERIES; do
-        _base="https://ppa.launchpadcontent.net/$OWNER/vicine/ubuntu/dists/$_series"
-        _c="$(code "$_base/InRelease")"
-        if [ "$_c" != "200" ]; then
-            printf 'FAIL  %-22s InRelease HTTP %s\n' "ppa $_series" "$_c"
-            fail=1
-            continue
-        fi
-        _v="$(get "$_base/main/binary-amd64/Packages.gz" | gzip -dc 2>/dev/null \
-            | sed -n 's/^Version: //p' | sed 's/-[0-9]*$//' | head -1)"
-        check "ppa $_series" "$ver" "$_v"
-    done
 }
 
 deadline=0

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- Ubuntu PPA distribution and its `ppa.yml` workflow; `debian/` packaging and
+  the Launchpad git mirror went with it. [verify-channels] now checks six
+  channels (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix flake).
 
 ## [1.7.7] - 2026-11-01
 ### Added

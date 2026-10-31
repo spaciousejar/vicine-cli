@@ -59,26 +59,10 @@ Homebrew) and the script itself; `--no-deps` skips the packages.
 yay -S vicine        # or: paru -S vicine
 ```
 
-### Ubuntu (PPA)
+### Ubuntu / Debian
 
-```sh
-sudo add-apt-repository ppa:spaciousejar/vicine
-sudo apt update
-sudo apt install vicine
-```
-
-The PPA carries the dependencies (`curl jq fzf mpv`, with `yt-dlp` and
-`ffmpeg` recommended). CI builds and uploads each release, and it fails the
-run unless Launchpad has actually published it. Serves Ubuntu 24.04 (noble)
-and 26.10 (resolute). A failed upload shows up as `apt update` reporting
-`403 Forbidden`:
-
-```sh
-sh scripts/verify-channels.sh 1.7.3   # prints what every channel serves
-```
-
-If the PPA does not serve your series yet, the one-liner installer above is
-the reliable path.
+No packaged channel on these distros — use the one-liner installer above,
+npm, or git.
 
 ### Homebrew (macOS)
 
@@ -187,12 +171,9 @@ then fails loudly if those pins didn't advance to the new tag, and
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the
 self-checks (under `sh`, `dash` and `bash`) on every push and PR.
 
-> Debian/Ubuntu (PPA): `.github/workflows/ppa.yml` builds and uploads a
-> source package to `ppa:spaciousejar/vicine` on launchpad.net (needs the
-> `PPA_GPG_PRIVATE_KEY` / `PPA_SSH_PRIVATE_KEY` secrets, already set).
-> Fedora/COPR and openSUSE/OBS aren't hosted yet —
-> they need accounts on copr.fedorainfracloud.org / build.opensuse.org.
-> Until then, vicine installs on those distros via npm, the one-liner, or
+> Fedora/COPR, openSUSE/OBS and Debian/Ubuntu aren't packaged —
+> they need accounts on copr.fedorainfracloud.org / build.opensuse.org,
+> and Debian/Ubuntu has no PPA. Until then, vicine installs on those distros via npm, the one-liner, or
 > git.
 
 ## Dependencies

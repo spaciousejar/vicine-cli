@@ -1,12 +1,11 @@
 name: Verify published channels
 
-# The release workflows can be green while a channel holds nothing — the
-# Ubuntu PPA published nothing for months behind a green workflow, and
-# nothing noticed until a user tried to apt install it. This job probes the
+# The release workflows can be green while a channel holds nothing — a
+# channel can silently keep serving the previous release. This job probes the
 # artifacts themselves (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket,
-# Nix flake, the PPA), so "green" means "a user can install this version".
+# Nix flake), so "green" means "a user can install this version".
 #
-# The wait is there because npm, the AUR and Launchpad publish
+# The wait is there because npm, the AUR and Homebrew publish
 # asynchronously — a tag push can be minutes ahead of the artifact.
 
 on:

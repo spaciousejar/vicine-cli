@@ -44,7 +44,6 @@ All on `master`, CI green:
 |----------|------|
 | `publish.yml` | npm publish + GitHub Release (notes = commit log since previous tag) |
 | `aur.yml` | bumps `pkgver`, recomputes sums, pushes the AUR package |
-| `ppa.yml` | builds + uploads the Launchpad PPA source package |
 | `pkg-bump.yml` | rewrites Homebrew/Scoop/Nix pins (runs on `master`, so its auto-commit can push) |
 | `tests.yml` | self-checks under `sh`, `dash`, `bash` |
 | `release-verify.yml` | fails loudly if the packaged pins didn't advance to the tag |
@@ -54,9 +53,8 @@ All on `master`, CI green:
 1. Watch Actions; if `release-verify` fails:
    `gh workflow run "Bump packaged versions"` — a stale bump is a manual fix.
 2. **Verify the channels.** A workflow can be green while a channel holds
-   nothing. The Ubuntu PPA did exactly that for months. One command probes
-   every artifact (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix
-   flake, the PPA):
+   nothing. One command probes every artifact (npm, GitHub Release, AUR,
+   Homebrew tap, Scoop bucket, Nix flake):
    ```sh
    sh scripts/verify-channels.sh 1.7.3 --wait 20
    ```
@@ -71,21 +69,6 @@ All on `master`, CI green:
    curl -s 'https://aur.archlinux.org/rpc/v5/info?arg[]=vicine' | jq -r '.results[0].Version'
    ```
 4. Done — the monthly audit covers everything else.
-
-### The PPA needs one manual step
-
-`ppa.yml` uploads to Launchpad. Launchpad accepts an upload only when the
-signature comes from a key **registered on the Launchpad account**. It rejects
-the upload silently otherwise. That is why the workflow stayed green for
-months while nothing was published. The job now waits for the source to appear
-in Launchpad's API and fails if it does not. A rejected upload is red, not
-silent.
-
-To fix a rejected upload, export the public half of the key that the workflow
-signs with. Register it at <https://launchpad.net/~spaciousejar/+gpgkeys>.
-Make sure the address in `DEBEMAIL` is confirmed on the account. Set the repo
-variable `PPA_GPG_FINGERPRINT` to the registered fingerprint. The workflow then
-fails fast if the secret's key ever differs from it.
 
 ## Versioning model
 

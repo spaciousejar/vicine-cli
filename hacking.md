@@ -106,7 +106,7 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
   The daily `live.yml` run makes that check.
 - Did a release reach the users? `sh scripts/verify-channels.sh
   1.7.2` probes npm, the GitHub Release, the AUR, the Homebrew tap, the
-  Scoop bucket, the Nix flake and the Ubuntu PPA. A green release workflow
+  Scoop bucket and the Nix flake. A green release workflow
   shows the upload went out. It does not show that a channel serves the
   release.
 

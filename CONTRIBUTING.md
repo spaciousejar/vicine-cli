@@ -36,7 +36,7 @@ First, check that no open [issue](https://github.com/spaciousejar/vicine-cli/iss
 
 ```
 change -> sh -n + tests/*.sh -> push master -> tag vX.Y.Z -> automation:
-  npm publish, AUR, PPA, Homebrew/Scoop/Nix pin bump, release-verify
+  npm publish, AUR, Homebrew/Scoop/Nix pin bump, release-verify
 ```
 
 - Releases are tag-driven: `git tag vX.Y.Z && git push origin vX.Y.Z`.
@@ -79,5 +79,5 @@ the parsers can be fixed against something real.
   does not catch a util-linux dependency the same way.
 - `scripts/verify-channels.sh <version>` probes what every distribution
   channel actually serves (npm, GitHub Release, AUR, Homebrew tap, Scoop
-  bucket, Nix flake, the PPA). The workflow `verify-channels.yml` runs the
+  bucket, Nix flake). The workflow `verify-channels.yml` runs the
   same check. It catches a "green release that nobody can install".
