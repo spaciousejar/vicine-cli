@@ -30,11 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   propagates to the shell. Interactive play and plain browsing keep exiting
   0. `tests/exit_codes.sh` pins the paths.
 
-- A watch-history lock left behind by a run that died between writing
-  `pid` and taking the lock no longer blocks every later history write
-  with no owner to wait for: after three consecutive tries the lock is
-  taken over. A live pid is still waited on. `tests/history.sh` covers
-  both stale shapes.
+- The watch-history lock is now a file carrying the holder's pid, acquired
+  with an atomic `ln` (the pid exists before the lock path does), so a
+  waiter can no longer "break" a live holder that had not written its pid
+  yet — that used to crop up as lost rows under CI load (8 parallel
+  writers left 11 of 13 rows). A dead pid still releases the lock:
+  pre-version directories and pid files left behind by killed runs are
+  inspected and cleared the same way. `tests/history.sh` covers the
+  pre-upgrade lock shapes and the 8-writer race.
 
 - AniDB search results decode `&amp;` (last in the existing HTML-entity
   chain, after `&#39;`/`&quot;`), so titles containing an ampersand no

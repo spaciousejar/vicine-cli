@@ -191,6 +191,7 @@ cleanup() {
     rm -f "$tmpfile" "$tmpfile2" "$tmpfile3" "$tmpfile4" "$tmpfile5" "${tmpfile}.tmp" "${tmpfile3}.pre"
     # ours only: a concurrent copy's stage file is the mktemp'd name IT tracked
     [ -n "${_hist_stage:-}" ] && rm -f "$_hist_stage"
+    [ -n "${_hist_sig:-}" ] && rm -f "$_hist_sig"
     [ -n "${_hist_lock:-}" ] && rm -rf "$_hist_lock"
     exit "$_exit_code"
 }
@@ -588,32 +589,48 @@ update_history() {
     # uses "" as well so the dedup key keeps awk's string semantics.
     # The mv below is last-writer-wins, so two terminals running at once kept
     # only the last row (measured: 8 writers left 2 rows). Hold a lock around
-    # the read-modify-write. mkdir is atomic; the pid file lets the next
-    # writer break a lock left behind by a killed process.
+    # the read-modify-write.
+    # The lock is a file that carries the holder's pid, acquired with ln.
+    # link(2) fails on an existing target, so only one writer holds at a time
+    # — and unlike a mkdir()+pid-write lock it is never pid-less while alive,
+    # so a waiter cannot "break" a lock that a live holder just took. A
+    # waiter clears the path with one rm after checking the pid is dead;
+    # since the rm is what frees the path, the next holder's ln can never
+    # race it. Pre-upgrade dirs (mkdir locks from older versions or the
+    # killed tests' leftovers) are inspected and broken the same way.
     _lock="$histfile.lock"
+    _hist_sig=""
     _hist_try=0
-    while ! mkdir "$_lock" 2>/dev/null; do
+    while :; do
         _hist_try=$(( _hist_try + 1 ))
         [ "$_hist_try" -ge 100 ] && return
-        _hist_pid="$(cat "$_lock/pid" 2>/dev/null)"
-        if [ -n "$_hist_pid" ]; then
-            ! kill -0 "$_hist_pid" 2>/dev/null && rm -rf "$_lock"
-        elif [ "$_hist_try" -ge 3 ]; then
-            # no pid inside: the holder died between mkdir and the pid
-            # write (or the write failed, e.g. disk full). A live holder
-            # writes its pid within microseconds, so after three tries the
-            # lock can only be stale — break it, or every later write
-            # silently returns without recording
-            rm -rf "$_lock"
+        if [ -f "$_lock" ]; then
+            _hist_pid="$(head -n1 "$_lock" 2>/dev/null)"
+            ! kill -0 "$_hist_pid" 2>/dev/null && rm -f "$_lock"
+        elif [ -d "$_lock" ]; then
+            # pre-ln layout: pid lives in the dir; a pid-less dir is a
+            # pre-upgrade holder between mkdir and its pid write (or a
+            # dead one) — after three tries treat it as dead
+            _hist_pid="$(cat "$_lock/pid" 2>/dev/null)"
+            if [ -n "$_hist_pid" ]; then
+                ! kill -0 "$_hist_pid" 2>/dev/null && rm -rf "$_lock"
+            elif [ "$_hist_try" -ge 3 ]; then
+                rm -rf "$_lock"
+            fi
+        else
+            _hist_sig="$(mktemp "$histfile.lock.sig.XXXXXX")" || return
+            printf '%s\n' "$$" > "$_hist_sig"
+            if ln "$_hist_sig" "$_lock" 2>/dev/null; then
+                break
+            fi
+            rm -f "$_hist_sig"; _hist_sig=""
         fi
         sleep 0.1 2>/dev/null || sleep 1
     done
-    # cleanup must remove this lock only if this process took it
     _hist_lock="$_lock"
-    printf '%s\n' "$$" > "$_hist_lock/pid"
     # mktemp, not a fixed "$histfile.tmp": the name is unique per writer, so
     # one writer's stage can never be truncated by the next one
-    _hist_stage="$(mktemp "$histfile.tmp.XXXXXX")" || { rm -rf "$_hist_lock"; _hist_lock=""; return; }
+    _hist_stage="$(mktemp "$histfile.tmp.XXXXXX")" || { rm -f "$_hist_lock" "$_hist_sig"; _hist_lock=""; _hist_sig=""; return; }
     awk -F '\t' -v s="$_slug" '$1 "" != s ""' "$histfile" > "$_hist_stage" 2>/dev/null || true
     # flatten tabs/newlines in the remote title: an embedded one would forge a
     # whole extra row, and its season field reaches a jq program on read-back.
@@ -621,9 +638,11 @@ update_history() {
     # the trailing newline and break wc -l in cmd_history.
     _title="$(printf '%s' "$_title" | tr '\t\n' '  ')"
     printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$_hist_stage"
-    mv "$_hist_stage" "$histfile"
-    rm -rf "$_hist_lock"
-    _hist_lock=""
+    mv "$_hist_stage" "$histfile"; _hist_stage=""
+    # release only my own lock: the shared path might describe someone
+    # else's pid if my holder state went stale underneath me
+    [ "$(head -n1 "$_hist_lock" 2>/dev/null)" = "$$" ] && rm -f "$_hist_lock"
+    rm -f "$_hist_sig"; _hist_lock=""; _hist_sig=""
 }
 
 cmd_history() {
