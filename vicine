@@ -596,7 +596,16 @@ update_history() {
         _hist_try=$(( _hist_try + 1 ))
         [ "$_hist_try" -ge 100 ] && return
         _hist_pid="$(cat "$_lock/pid" 2>/dev/null)"
-        [ -n "$_hist_pid" ] && ! kill -0 "$_hist_pid" 2>/dev/null && rm -rf "$_lock"
+        if [ -n "$_hist_pid" ]; then
+            ! kill -0 "$_hist_pid" 2>/dev/null && rm -rf "$_lock"
+        elif [ "$_hist_try" -ge 3 ]; then
+            # no pid inside: the holder died between mkdir and the pid
+            # write (or the write failed, e.g. disk full). A live holder
+            # writes its pid within microseconds, so after three tries the
+            # lock can only be stale — break it, or every later write
+            # silently returns without recording
+            rm -rf "$_lock"
+        fi
         sleep 0.1 2>/dev/null || sleep 1
     done
     # cleanup must remove this lock only if this process took it
@@ -800,6 +809,28 @@ _dl_progress() {
     _filled="$(printf '%*s' "$_fill" '' | tr ' ' '#')"
     _empty="$(printf '%*s' "$(( _bw - _fill ))" '')"
     info "[${_filled}${_empty}] ${_done}/${_total} (${_pct}%)"
+}
+
+# Batch drain shared by both -D loops (anime + series). The wait, progress,
+# counters and interrupt exit used to live inline twice and had to be edited
+# in lockstep. drain_jobs waits on each PID individually because a bare
+# `wait` returns only the LAST job's status, so a Ctrl-C inside a batched
+# worker could be swallowed. Reads the batch globals (_jobs, _waitpids,
+# _done, _total, _drain_rc) and races nothing: every caller is the main
+# shell. Call bare inside the loop (drains only when the batch is full);
+# call with `final` after it (drains whatever is left in flight).
+_dl_batch() {
+    if [ -n "${1:-}" ]; then
+        [ -n "${_waitpids:-}" ] || return 0
+    else
+        [ "${_jobs:-0}" -ge "$dl_jobs" ] || return 0
+    fi
+    drain_jobs $_waitpids
+    _done=$(( _done + _jobs ))
+    _dl_progress "$_done" "$_total"
+    _waitpids=""; _jobs=0
+    [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
+    return 0
 }
 
 do_download() {
@@ -1351,20 +1382,26 @@ cmd_search() {
             # die before the chain: an unreachable API is not the same as a miss,
             # and -i must not turn a dead endpoint into a full fallback search
             [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
-            provider_chain "$_query" "API unreachable"
-            return
+            # the chain's result must reach the process exit for -D this time
+            _pc_rc=0
+            provider_chain "$_query" "API unreachable" || _pc_rc=$?
+            return "$_pc_rc"
         fi
         select_item
         _sel_rc=$?
         if [ "$_sel_rc" -eq 0 ]; then
-            [ "$info_only" -eq 1 ] && show_info
-            [ "$info_only" -eq 0 ] && prompt_action
-            return 0
+            if [ "$info_only" -eq 1 ]; then show_info; else prompt_action; fi
+            # show/prompt's status is the play-or-download result the caller
+            # (-d/-D) must see; a bare `return 0` flattened it
+            return
         fi
         # user cancelled the picker — exit quietly, no provider chain
         [ "$_sel_rc" = 2 ] && return 0
     done
-    provider_chain "$_query" "no results" || warn "No results found for: $_query"
+    _pc_rc=0
+    provider_chain "$_query" "no results" || _pc_rc=$?
+    [ "$_pc_rc" -eq 0 ] || warn "No results found for: $_query"
+    return "$_pc_rc"
 }
 
 # -t/-r share one handler: the endpoints differ only in the API root; the
@@ -1435,7 +1472,7 @@ anidb_search() {
             403|429) die "hianime is rate-limiting this IP (HTTP ${_code}) — wait a bit and retry." ;;
         esac
         _page="$(printf '%s' "$_page" | tr '\n' ' ' | sed 's|<a href|\n<a href|g')"
-        _rows="$(printf "%s" "$_page" | sed -nE 's|.*href="[^"]*/watch/[^"]+"[^>]*title="([^"]*)"[^>]*data-id="([0-9]+)".*|\2\t\1|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g')"
+        _rows="$(printf "%s" "$_page" | sed -nE 's|.*href="[^"]*/watch/[^"]+"[^>]*title="([^"]*)"[^>]*data-id="([0-9]+)".*|\2\t\1|p' | sed -e "s|&#0*39;|'|g" -e "s|&#x27;|'|g" -e 's|&quot;|"|g' -e 's/&amp;/\&/g')"
         [ -n "$_rows" ] && break
     done
     [ -n "$_rows" ] || {
@@ -1633,7 +1670,9 @@ anime_play_loop() {
                 [ -n "$_pick" ] && _cur_ep="$(printf "%s\n" "$anime_ep_list" | sed -n "$(printf "%s" "$_pick" | awk '{print $1+0}')p")"
                 ;;
             change_quality)
-                _new_q=$(printf '480p\n720p\n1080p\n2160p' | pick_quality_menu "Quality: ")
+                # pick_quality_menu falls back to the same default list on
+                # empty stdin, so the explicit list here was dead weight
+                _new_q=$(pick_quality_menu "Quality: ")
                 [ -n "$_new_q" ] && quality="$_new_q"
                 ;;
             quit|*)   break ;;
@@ -1761,15 +1800,7 @@ cmd_anime() {
                 ( anime_play_episode "$_ep" "$_occ" && printf '%s\n' "$_ep" >> "$tmpfile5" ) &
                 _waitpids="$_waitpids $!"
                 _jobs=$(( _jobs + 1 ))
-                # drain_jobs waits per PID: a bare `wait` loses every status
-                # except the last job's, so a Ctrl-C would be swallowed there
-                [ "$_jobs" -ge "$dl_jobs" ] && {
-                    drain_jobs $_waitpids
-                    _done=$(( _done + _jobs ))
-                    _dl_progress "$_done" "$_total"
-                    _waitpids=""; _jobs=0
-                    [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
-                }
+                _dl_batch
             else
                 quiet_dl=""
                 anime_play_episode "$_ep" "$_occ"
@@ -1781,11 +1812,7 @@ cmd_anime() {
                 _dl_progress "$_done" "$_total"
             fi
         done < "$tmpfile3"
-        drain_jobs $_waitpids
-        _done=$(( _done + _jobs ))
-        _dl_progress "$_done" "$_total"
-        _waitpids=""
-        [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
+        _dl_batch final
         _hist_ep="$(sort -n "$tmpfile5" 2>/dev/null | tail -1)"
         [ -n "${_hist_ep:-}" ] && update_history "$anime_id" "$anime_title" anime 0 "$_hist_ep"
         if [ "$_dl_failed" -gt 0 ]; then
@@ -1951,15 +1978,7 @@ if is_series; then
                     ) &
                     _waitpids="$_waitpids $!"
                     _jobs=$(( _jobs + 1 ))
-                    # drain_jobs waits on each PID individually (a bare
-                    # `wait` loses all but the last job's status)
-                    [ "$_jobs" -ge "$dl_jobs" ] && {
-                        drain_jobs $_waitpids
-                        _done=$(( _done + _jobs ))
-                        _dl_progress "$_done" "$_total"
-                        _waitpids=""; _jobs=0
-                        [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
-                    }
+                    _dl_batch
                 else
                     quiet_dl=""
                     # resolution stalls ~2-3 s/episode (token API +
@@ -2000,11 +2019,7 @@ if is_series; then
                     _dl_progress "$_done" "$_total"
                 fi
             done < "$tmpfile3"
-            drain_jobs $_waitpids
-            _done=$(( _done + _jobs ))
-            _dl_progress "$_done" "$_total"
-            _waitpids=""
-            [ "$_drain_rc" -ge 130 ] && exit "$_drain_rc"
+            _dl_batch final
         fi
         _si=$(( _si + 1 ))
     done
@@ -2453,11 +2468,17 @@ case "$search_mode" in
         # so an empty/aborted search must be detected by content (-s), not
         # existence — otherwise the flow below runs on a blank item and dies
         # with "integer expected" / "No downloadable links".
-        [ "$_backup_used" = "1" ] && exit 0
+        # the fallback's rc is the download result the script must report
+        [ "$_backup_used" = "1" ] && exit "${_pc_rc:-0}"
         [ -s "$tmpfile2" ] || exit 0
         download_all_item
         ;;
 esac
 
-[ "$player_function" = "download" ] && exit 0
+# -d/-D report the download result so scripts and CI can detect failures;
+# a failed batch must not exit 0. Interactive play always exits 0.
+_rc=$?
+if [ "$player_function" = "download" ] || [ "$download_all_mode" = 1 ]; then
+    exit "$_rc"
+fi
 exit 0

@@ -72,5 +72,14 @@ update_history "after-stale" "Stale" movie 0 0
     || _fail "a stale lock blocked update_history"
 [ -d "$histfile.lock" ] && _fail "update_history left its lock behind"
 
+# a lock with NO pid inside must also be broken: the holder died between
+# mkdir and the pid write (or the write failed). Without the break it blocks
+# every later write for 100 tries, then each write silently gives up.
+mkdir -p "$histfile.lock"
+update_history "after-stale-empty" "Stale" movie 0 0
+[ "$(cut -f1 "$histfile" | tail -1)" = "after-stale-empty" ] \
+    || _fail "a pid-less stale lock blocked update_history"
+[ -d "$histfile.lock" ] && _fail "update_history left the empty lock behind"
+
 rm -rf "$tmp"
-echo "PASS (11 checks)"
+echo "PASS (14 checks)"
