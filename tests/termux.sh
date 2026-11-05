@@ -16,8 +16,14 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/vicine-termux.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
 # --- detection: uname says Linux, only $PREFIX/$TERMUX_VERSION tell ---
-TERMUX_VERSION=0.118 is_termux || _fail "TERMUX_VERSION not detected as Termux"
-PREFIX=/usr is_termux && _fail "PREFIX=/usr misdetected as Termux"
+# Each case sets BOTH vars explicitly: on a real phone the ambient shell
+# carries TERMUX_VERSION, so "PREFIX=/usr is_termux" without unsetting
+# TERMUX_VERSION still detects Termux — the misdetection the phone run
+# caught. Subshells use the loaded is_termux; only the env changes.
+( unset PREFIX; export TERMUX_VERSION=0.118; is_termux ) ||
+    _fail "TERMUX_VERSION not detected as Termux"
+( unset TERMUX_VERSION; export PREFIX=/usr; is_termux ) &&
+    _fail "PREFIX=/usr misdetected as Termux"
 (
     unset TERMUX_VERSION PREFIX
     is_termux
@@ -93,8 +99,10 @@ _out="$(HOME="$tmp/home" TERMUX_VERSION=1 PREFIX="$tmp/prefix" \
 [ -e "$tmp/home/.local/bin/vicine" ] &&
     _fail "Termux install wrote to the non-PATH ~/.local/bin"
 
-# a non-Termux host keeps the old default
-_out="$(HOME="$tmp/home2" PATH="$tmp/bin:$PATH" sh "$SRC/install.sh" --no-deps 2>&1)"
+# a non-Termux host keeps the old default (env must be cleared: the phone
+# suite showed TERMUX_VERSION leaks in and the installer then targets
+# $PREFIX/bin instead of ~/.local/bin)
+_out="$(HOME="$tmp/home2" PATH="$tmp/bin:$PATH" env -u TERMUX_VERSION -u PREFIX sh "$SRC/install.sh" --no-deps 2>&1)"
 [ -x "$tmp/home2/.local/bin/vicine" ] ||
     _fail "desktop install target moved: $_out"
 

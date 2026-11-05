@@ -5,6 +5,17 @@ All notable changes to **vicine** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-11-05
+### Fixed
+- The watch-history lock is now a file carrying the holder's pid, acquired
+  with an atomic `ln` (the pid exists before the lock path does), so a
+  waiter can no longer "break" a live holder that had not written its pid
+  yet — that used to crop up as lost rows under CI load (8 parallel
+  writers left 11 of 13 rows). A dead pid still releases the lock:
+  pre-version directories and pid files left behind by killed runs are
+  inspected and cleared the same way. `tests/history.sh` covers the
+  pre-upgrade lock shapes and the 8-writer race.
+
 ## [1.8.0] - 2026-11-05
 ### Added
 

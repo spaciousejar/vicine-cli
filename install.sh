@@ -11,8 +11,8 @@ deps="curl jq fzf mpv yt-dlp"
 # Termux (Android) reports uname -s as Linux, has no sudo, and marks itself
 # only through $PREFIX=/data/data/com.termux/files/usr.
 is_termux() {
-    [ -n "${TERMUX_VERSION:-}" ] && return 0
     case "${PREFIX:-}" in */com.termux/*) return 0 ;; esac
+    [ -n "${TERMUX_VERSION:-}" ] && return 0
     return 1
 }
 

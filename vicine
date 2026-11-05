@@ -157,8 +157,8 @@ dep_ch() {
 # Termux (Android) reports uname -s as Linux and has neither /tmp nor sudo.
 # $PREFIX is the one reliable marker: /data/data/com.termux/files/usr.
 is_termux() {
-    [ -n "${TERMUX_VERSION:-}" ] && return 0
     case "${PREFIX:-}" in */com.termux/*) return 0 ;; esac
+    [ -n "${TERMUX_VERSION:-}" ] && return 0
     return 1
 }
 
@@ -623,6 +623,15 @@ update_history() {
             if ln "$_hist_sig" "$_lock" 2>/dev/null; then
                 break
             fi
+            # Termux (Android) blocks hard links (hardlink on its FS
+            # denies with EPERM), so ln can never acquire there. Fall
+            # back to a mkdir lock with the pid inside, the shape the
+            # [ -d "$_lock" ] branch above already understands. mkdir is
+            # atomic on the same FS, so only one writer holds it.
+            if mkdir "$_lock" 2>/dev/null; then
+                printf '%s\n' "$$" > "$_lock/pid"
+                break
+            fi
             rm -f "$_hist_sig"; _hist_sig=""
         fi
         sleep 0.1 2>/dev/null || sleep 1
@@ -640,8 +649,13 @@ update_history() {
     printf "%s\t%s\t%s\t%s\t%s\n" "$_slug" "$_title" "$_type" "$_season" "$_ep" >> "$_hist_stage"
     mv "$_hist_stage" "$histfile"; _hist_stage=""
     # release only my own lock: the shared path might describe someone
-    # else's pid if my holder state went stale underneath me
-    [ "$(head -n1 "$_hist_lock" 2>/dev/null)" = "$$" ] && rm -f "$_hist_lock"
+    # else's pid if my holder state went stale underneath me. A mkdir
+    # fallback lock carries the pid in its dir (see acquire above).
+    if [ -d "$_hist_lock" ]; then
+        [ "$(cat "$_hist_lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$_hist_lock"
+    else
+        [ "$(head -n1 "$_hist_lock" 2>/dev/null)" = "$$" ] && rm -f "$_hist_lock"
+    fi
     rm -f "$_hist_sig"; _hist_lock=""; _hist_sig=""
 }
 

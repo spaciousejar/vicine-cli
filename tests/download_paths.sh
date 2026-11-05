@@ -68,7 +68,8 @@ _ytdlp_l=$(grep -nF 'yt-dlp $_yt' "$SCRIPT" | head -1 | cut -d: -f1)
     _fail "do_download does not call check_stream_url before yt-dlp — a provider '--exec=' payload reaches the downloader"
 
 # --- dl_find: any real container counts, staging files do not ---------------
-_D=/tmp/VICINE.selfcheck.dl; rm -rf "$_D"; mkdir -p "$_D"
+# /tmp is missing on Termux, so stage under TMPDIR (falls back to /tmp).
+_D="${TMPDIR:-/tmp}/VICINE.selfcheck.dl"; rm -rf "$_D"; mkdir -p "$_D"
 [ -n "$(dl_find "$_D/S1E01")" ] && _fail "dl_find invented a file in an empty dir"
 : > "$_D/S1E01.part"
 [ -n "$(dl_find "$_D/S1E01")" ] && _fail "dl_find treated a .part as complete"
