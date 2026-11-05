@@ -8,7 +8,22 @@
 
 deps="curl jq fzf mpv yt-dlp"
 
+# Termux (Android) reports uname -s as Linux, has no sudo, and marks itself
+# only through $PREFIX=/data/data/com.termux/files/usr.
+is_termux() {
+    [ -n "${TERMUX_VERSION:-}" ] && return 0
+    case "${PREFIX:-}" in */com.termux/*) return 0 ;; esac
+    return 1
+}
+
 install_deps() {
+    if is_termux; then
+        # mpv is only in the x11 repo; nothing here needs root
+        pkg install -y x11-repo
+        pkg install -y $deps || { echo "Install the missing packages with: pkg install $deps" >&2; return 1; }
+        command -v yt-dlp >/dev/null 2>&1 || pip install yt-dlp
+        return 0
+    fi
     case "$(uname -s)" in
         Darwin*)
             command -v brew >/dev/null 2>&1 || { echo "Homebrew required: https://brew.sh" >&2; return 1; }
@@ -53,7 +68,13 @@ if [ -n "$need" ]; then
 fi
 
 target="${1:-${HOME}/.local/bin}"
-[ "$1" = "--no-deps" ] && target="${HOME}/.local/bin"
+case "$1" in
+    ""|--no-deps)
+        target="${HOME}/.local/bin"
+        # Termux: $PREFIX/bin is already on PATH and writable without sudo
+        if is_termux && [ -n "${PREFIX:-}" ]; then target="$PREFIX/bin"; fi
+        ;;
+esac
 
 url="https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/vicine"
 

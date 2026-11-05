@@ -119,7 +119,7 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-i${C_RESET}, ${C_CYAN}--info${C_RESET}              Show info only (no play)
     ${C_CYAN}-d${C_RESET}, ${C_CYAN}--download${C_RESET}          Download instead of playing
     ${C_CYAN}-D${C_RESET}, ${C_CYAN}--download-all${C_RESET}      Download full series or anime
-    ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}            Specify player (mpv, iina, vlc)
+    ${C_CYAN}-p${C_RESET}, ${C_CYAN}--player${C_RESET}            Specify player (mpv, iina, vlc, termux-open-url)
     ${C_CYAN}-V${C_RESET}, ${C_CYAN}--version${C_RESET}, ${C_CYAN}-v${C_RESET}, ${C_CYAN}--v${C_RESET}  Show version
     ${C_CYAN}-h${C_RESET}, ${C_CYAN}--help${C_RESET}              Show this help
     ${C_DIM}--rofi${C_RESET}                  Use rofi instead of fzf
@@ -154,12 +154,30 @@ dep_ch() {
     command -v "$1" >/dev/null || die "Program $1 not found. Please install it."
 }
 
+# Termux (Android) reports uname -s as Linux and has neither /tmp nor sudo.
+# $PREFIX is the one reliable marker: /data/data/com.termux/files/usr.
+is_termux() {
+    [ -n "${TERMUX_VERSION:-}" ] && return 0
+    case "${PREFIX:-}" in */com.termux/*) return 0 ;; esac
+    return 1
+}
+
 dep_ch_failover() {
     [ -z "$1" ] && return 1
     prog=$(printf "%s" "$1" | cut -d "," -f 1)
     rest=$(printf "%s" "$1" | cut -s -d "," -f 2-)
     command -v "$prog" >/dev/null 2>&1 && printf "%s" "$prog" && return 0
     dep_ch_failover "$rest"
+}
+
+# Termux's mpv needs termux-x11 (or --vo=tct) to show anything; handing the URL
+# to an Android player is what plays on a phone. VICINE_PLAYER=mpv switches back.
+default_player() {
+    if is_termux; then
+        dep_ch_failover "termux-open-url,mpv,vlc"
+    else
+        dep_ch_failover "mpv,vlc"
+    fi
 }
 
 _exit_code=0
@@ -693,6 +711,13 @@ play_url() {
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
+            ;;
+        *termux-open*)
+            # an Android intent carries the URL only — no mpv flags and no
+            # headers, so a referer-gated CDN will refuse; say so up front
+            [ -n "$_ref" ] && warn "termux-open-url cannot pass the Referer header; this stream may refuse to play."
+            nohup "$player_function" "$_url" >/dev/null 2>&1 & _player_pid=$!
+            _pl_rc=0
             ;;
         download) do_download "$_url" "$_name" "$_ref"; _pl_rc=$? ;;
         *)
@@ -2211,6 +2236,11 @@ anime_mode="${VICINE_ANIME_MODE:-dub}"
 anime_ep_maps=""
 anime_ep_list=""
 download_dir="${VICINE_DOWNLOAD_DIR:-$HOME/Movies}"
+# Termux: $HOME/Movies is app-private. ~/storage/downloads only exists after
+# termux-setup-storage, and is the folder Android apps (and the user) can see.
+if [ -z "${VICINE_DOWNLOAD_DIR:-}" ] && is_termux && [ -d "$HOME/storage/downloads" ]; then
+    download_dir="$HOME/storage/downloads/Vicine"
+fi
 dl_jobs="${VICINE_DL_JOBS:-1}"
 no_detach="${VICINE_NO_DETACH:-0}"
 info_only=0
@@ -2230,12 +2260,13 @@ browse_type=""
 histfile="${VICINE_HISTFILE:-$HOME/.local/share/vicine/history}"
 mkdir -p "$(dirname "$histfile")" 2>/dev/null
 
-# Tmp files
-tmpfile=$(mktemp /tmp/VICINE.XXXXXX)
-tmpfile2=$(mktemp /tmp/VICINE.XXXXXX)
-tmpfile3=$(mktemp /tmp/VICINE.XXXXXX)
-tmpfile4=$(mktemp /tmp/VICINE.XXXXXX)
-tmpfile5=$(mktemp /tmp/VICINE.XXXXXX)
+# Tmp files: Termux has no /tmp (TMPDIR points at $PREFIX/tmp there)
+tmpdir="${TMPDIR:-/tmp}"
+tmpfile=$(mktemp "$tmpdir/VICINE.XXXXXX")
+tmpfile2=$(mktemp "$tmpdir/VICINE.XXXXXX")
+tmpfile3=$(mktemp "$tmpdir/VICINE.XXXXXX")
+tmpfile4=$(mktemp "$tmpdir/VICINE.XXXXXX")
+tmpfile5=$(mktemp "$tmpdir/VICINE.XXXXXX")
 trap cleanup EXIT
 trap on_sigint INT
 trap on_sighup HUP
@@ -2255,7 +2286,7 @@ case "$(uname -s)" in
         player_function="${VICINE_PLAYER:-$(dep_ch_failover "iina,/Applications/IINA.app/Contents/MacOS/iina-cli,mpv")}"
         ;;
     *)
-        player_function="${VICINE_PLAYER:-$(dep_ch_failover "mpv,vlc")}"
+        player_function="${VICINE_PLAYER:-$(default_player)}"
         ;;
 esac
 
