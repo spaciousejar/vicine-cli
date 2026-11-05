@@ -50,8 +50,9 @@ System-wide (requires root):
 curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/install.sh | sudo sh -s /usr/local/bin
 ```
 
-The installer installs `curl jq fzf mpv yt-dlp` (via apt/pacman/dnf/apk or
-Homebrew) and the script itself; `--no-deps` skips the packages.
+The installer installs `curl jq fzf mpv yt-dlp` (via apt/pacman/dnf/apk,
+`pkg` on Termux, or Homebrew) and the script itself; `--no-deps` skips the
+packages.
 
 ### AUR (Arch)
 
@@ -95,6 +96,28 @@ scoop install vicine-cli/vicine
 
 Add a player (`scoop install extras/mpv`, IINA, or VLC) — vicine has no
 bundled player on Windows; `yt-dlp` from `extras` enables downloads.
+
+### Termux (Android)
+
+```sh
+pkg install curl
+curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/install.sh | sh
+```
+
+Termux reports itself as Linux, but it has neither `/tmp` nor `sudo`. The
+installer therefore runs `pkg` (adding the `x11` repo for `mpv`), installs the
+script into `$PREFIX/bin`, and uses `$TMPDIR` for its working files.
+
+Playback goes through `termux-open-url` to an Android player, so install one
+(VLC, for example) and let it handle `http`/`https` links. An Android intent
+cannot carry headers, so vicine warns when a stream needs a `Referer` — those
+titles may refuse to play. For terminal playback under
+[Termux:X11](https://github.com/termux/termux-x11), run with
+`VICINE_PLAYER=mpv`.
+
+After `termux-setup-storage`, downloads default to `~/storage/downloads/Vicine`
+(the folder the Android file manager and other apps can see); without it they
+stay in `~/Movies`.
 
 ### Manual (git)
 
@@ -223,7 +246,10 @@ yt-dlp's own progress bar; set `VICINE_DL_JOBS=2` (or more) for parallel
 batches — per-job bars are suppressed then and a `[####------] done/total`
 tally is shown instead. Movies keep the flat layout. An anime split into two
 cours lists its episode numbers twice, so the second run goes to
-`season-2/` rather than overwriting the first.
+`season-2/` rather than overwriting the first. A `-d`/`-D` run that could
+not download at least one episode exits 1; interactive sessions always
+exit 0. On Termux after `termux-setup-storage`, the default is
+`~/storage/downloads/Vicine` so the files land in shared storage.
 
 ### Options
 
@@ -248,7 +274,7 @@ cours lists its episode numbers twice, so the second run goes to
 | `-i`, `--info` | Show info only (no play) |
 | `-d`, `--download` | Download instead of playing |
 | `-D`, `--download-all` | Download a movie, whole series, or anime — interactive quality/season pickers; serial by default (yt-dlp bars), parallel opt-in via `VICINE_DL_JOBS` |
-| `-p`, `--player` | Specify player (mpv, iina, vlc) |
+| `-p`, `--player` | Specify player (mpv, iina, vlc, termux-open-url) |
 | `-V`, `-v`, `--version`, `--v` | Show version |
 | `-h`, `--help` | Show help |
 | `--rofi` | Use rofi instead of fzf |
@@ -268,6 +294,9 @@ cours lists its episode numbers twice, so the second run goes to
   `VICINE_ANIME_MODE=sub`) for subtitled Japanese.
 - **Can I use VLC or IINA instead of mpv?** Yes — `-p vlc` / `-p iina`, or
   set `VICINE_PLAYER`.
+- **Does it run on Android?** Yes, in [Termux](#termux-android) — the
+  installer uses `pkg`, and playback is handed to an Android player via
+  `termux-open-url`.
 - **How do I download a whole series or anime?** `-D` downloads every
   episode (movies, series and anime); anime prompts for an episode range
   (e.g. `1-50`), series for the seasons. Non-TTY runs download everything at

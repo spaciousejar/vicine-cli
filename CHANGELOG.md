@@ -6,10 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- Termux (Android) support. Termux reports `uname -s` as Linux, so vicine
+  treated it as a desktop: temp files went to `/tmp`, which does not exist
+  there, and the player default was `mpv`, whose Android build renders
+  nothing without Termux:X11. Temp files now follow `$TMPDIR`, the default
+  player is `termux-open-url` (an Android player, with a warning when the
+  stream needs a `Referer` header an intent cannot carry), downloads default
+  to `~/storage/downloads/Vicine` after `termux-setup-storage`, and
+  `install.sh` uses `pkg` (plus the `x11` repo for `mpv`) with no `sudo`,
+  installing into `$PREFIX/bin`. `tests/termux.sh` pins all of it.
+
 ### Removed
 - Ubuntu PPA distribution and its `ppa.yml` workflow; `debian/` packaging and
   the Launchpad git mirror went with it. [verify-channels] now checks six
   channels (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix flake).
+
+### Fixed
+- Search and download runs no longer mask failure exit codes. A dead API
+  behind a `-d`/`-D` run (or behind the `-D -A` anime fallback) used to exit
+  0 and look like success to any script wrapping vicine; the failure rc now
+  propagates to the shell. Interactive play and plain browsing keep exiting
+  0. `tests/exit_codes.sh` pins the paths.
+
+- A watch-history lock left behind by a run that died between writing
+  `pid` and taking the lock no longer blocks every later history write
+  with no owner to wait for: after three consecutive tries the lock is
+  taken over. A live pid is still waited on. `tests/history.sh` covers
+  both stale shapes.
+
+- AniDB search results decode `&amp;` (last in the existing HTML-entity
+  chain, after `&#39;`/`&quot;`), so titles containing an ampersand no
+  longer show the raw entity.
 
 ## [1.7.7] - 2026-11-01
 ### Added

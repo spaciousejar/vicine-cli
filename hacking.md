@@ -127,7 +127,9 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
   read once per item by `season_fields` (one `jq` call for every
   `season_N`), not twenty `jq` calls scanning 1..20.
 - Exit codes matter: `die` → 1, interrupts → 130, player exit codes pass
-  through with `--exit-after-play`.
+  through with `--exit-after-play`, and a `-d`/`-D` run with a failed
+  episode exits 1. Interactive paths exit 0 by design, so failure rc is
+  not lost catching a broken pipe mid-menu (`tests/exit_codes.sh`).
 - Quality is normalized lowercase and `4k` → `2160p` before any matching.
 - Download chain: yt-dlp → ffmpeg → curl, staged through `.part` with an
   atomic rename; every URL is probed first with a 1-byte range request —
@@ -136,9 +138,11 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
   error bodies; an existing non-empty file short-circuits ("Already
   exists").
 - Parallel `-D` loops (`VICINE_DL_JOBS`, default 1 = serial) resolve + download in
-  subshell workers, awaiting each job by PID — dash's bare `wait` returns
-  the last job's status, bash/POSIX return 0, so the pids are waited
-  individually to keep Ctrl-C working under every shell.
+  subshell workers; both loops (anime, series) share one `_dl_batch` helper
+  that waits on each job by PID — dash's bare `wait` returns the last job's
+  status, bash/POSIX return 0, so the pids are waited individually to keep
+  Ctrl-C working under every shell — then shows the progress tally, resets
+  the batch and exits 130 out of the run if any worker was interrupted.
 - `-d` downloads without the playback menu and writes a history row per
   successful download, so it resurfaces under `-c` (dedup keeps one line
   per title). An episode range (`-e N-M`, multi-select included) runs to
