@@ -31,6 +31,7 @@ drain_jobs "$_c" "$_d"
 
 # --- _dl_batch: the batch wrapper both -D loops share ---
 need _dl_batch
+# shellcheck disable=SC2034  # global read by the sourced _dl_batch
 dl_jobs=2
 
 # below threshold: no drain, counters untouched ($? — _drain_rc is left
