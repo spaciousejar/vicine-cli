@@ -4,8 +4,8 @@ See the [README](README.md) first — this file is the legal notice.
 
 vicine is a terminal front-end for content that is already publicly
 accessible on the web. Every stream or download it serves comes from
-external, non-affiliated sources — movie/series data is scraped from the
-hicine API (`api.hicine.sbs`) and anime from hianime (`hianime.at`, embeds
+external, non-affiliated sources — movie/series data comes from the
+hicine public API (`hicine.biz/hapi`) and anime from hianime (`hianime.at`, embeds
 hosted by ZokoAnime/`hls.1embed.buzz`).
 
 - Use vicine at your own risk, in accordance with your government and

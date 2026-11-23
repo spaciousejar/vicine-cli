@@ -49,13 +49,15 @@ update_history() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$_
 warn() { printf '%s\n' "$*" >> "$_warn"; }
 
 # "$1 = dl_jobs" -> "rc|markers|history|warnings"
+# Markers are sorted: parallel workers append in any order, and production
+# reads them order-independently, so the test must not assert write order.
 run() {
     : > "$_history"; : > "$_warn"
     dl_jobs="$1"
     ( download_all_item ) </dev/null >/dev/null 2>&1
     _rc=$?
     printf '%s|%s|%s|%s' "$_rc" \
-        "$(tr '\n' ' ' < "$tmpfile5" | sed 's/ *$//')" \
+        "$(sort "$tmpfile5" | tr '\n' ' ' | sed 's/ *$//')" \
         "$(cat "$_history" 2>/dev/null)" \
         "$(tr '\n' ' ' < "$_warn" | sed 's/ *$//')"
 }

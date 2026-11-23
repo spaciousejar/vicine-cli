@@ -28,7 +28,7 @@ fi
 # The config block sits after the VICINE_LIB early return, so sourcing the
 # library leaves the provider settings unset — read them from the source.
 _cfg() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$SRC" | head -1; }
-API="$(_cfg API)"
+HICINE_BASE="$(_cfg HICINE_BASE)"
 anime_base="$(_cfg anime_base)"
 anime_search_api="$(_cfg anime_search_api)"
 anime_episodes_api="$(_cfg anime_episodes_api)"
@@ -38,58 +38,64 @@ curl_exe="$(_cfg curl_exe)"
 anime_search_api="$(printf '%s' "$anime_search_api" | sed "s|\${anime_base}|$anime_base|")"
 anime_episodes_api="$(printf '%s' "$anime_episodes_api" | sed "s|\${anime_base}|$anime_base|")"
 
-# hicine — the catalogue API answers a JSON array for /api/search/<query>
-_hic=""
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vicine-live.XXXXXX")" || exit 1
+trap 'rm -rf "$tmpdir"' EXIT
+
+# hicine — the public /hapi API answers {items:[...]} for /hapi/search
+_hic="$tmpdir/hicine.json"
 _try=1
 while [ "$_try" -le 3 ]; do
-    _hic="$(curl -sf --max-time 20 "${API}/api/search/batman" 2>/dev/null)"
-    [ -n "$_hic" ] && break
+    curl -sf --max-time 20 -e "${HICINE_BASE}/" "${HICINE_BASE}/hapi/search?q=batman&page=1" -o "$_hic" 2>/dev/null && break
     _try=$(( _try + 1 ))
     sleep 3
 done
-if [ -z "$_hic" ]; then
-    echo "BLOCKED: hicine API did not answer after 3 tries"
-    exit 0
-fi
-_n="$(printf '%s' "$_hic" | jq 'length' 2>/dev/null)"
+[ -s "$_hic" ] || { echo "BLOCKED: hicine API did not answer after 3 tries"; exit 0; }
+_n="$(jq '.items | length' "$_hic" 2>/dev/null)"
 case "${_n:-}" in
     ''|*[!0-9]*)
-        _fail "hicine search did not answer with a JSON array: $(printf '%s' "$_hic" | head -c 200)"
+        _fail "hicine search did not answer with an items array: $(head -c 200 "$_hic")"
         ;;
 esac
 [ "$_n" -ge 1 ] || _fail "hicine search returned no rows"
 echo "OK    hicine search            $_n rows"
 
-# A spaced query has to survive the retry cmd_search makes. server-1 matches
-# titles literally: "spider man" answered 0 rows when "spider-man" answered 16.
-# Both go through henc, so a broken encoder shows up here too.
+# A spaced query has to survive the retry cmd_search makes. The API matches
+# titles literally: "spider man" misses where "spider-man" hits. Both go
+# through henc, so a broken encoder shows up here too.
 _q='spider man'
 _rows=0
 for _c in "$_q" "$(printf '%s' "$_q" | tr -s '[:space:]' '-')"; do
-    _r="$(curl -sf --max-time 20 "${API}/api/search/$(henc "$_c")" 2>/dev/null | jq 'length' 2>/dev/null)"
+    curl -sf --max-time 20 -e "${HICINE_BASE}/" "${HICINE_BASE}/hapi/search?q=$(henc "$_c")&page=1" -o "$_hic.tmp" 2>/dev/null || continue
+    _r="$(jq '.items | length' "$_hic.tmp" 2>/dev/null)"
     case "${_r:-}" in
-        ''|*[!0-9]*) _fail "search for '$_c' did not answer with a JSON array" ;;
+        ''|*[!0-9]*) _fail "search for '$_c' did not answer with an items array" ;;
     esac
     _rows=$(( _rows + _r ))
 done
 [ "$_rows" -ge 1 ] || _fail "neither 'spider man' nor 'spider-man' returned a row"
 echo "OK    hicine spaced query      $_rows rows"
 
-# The resolver: a payload link has to walk to a real stream URL. Walked over
-# the first few items with links so one dead bucket entry does not fail the
-# run — that is exactly what movie_playable does per title.
+# The resolver: walk the first few search hits through /hapi/t -> /hapi/g ->
+# /hapi/dl -> /hapi/go to a real stream URL. One dead token must not fail the
+# run — that is exactly what hicine_enrich_item does per title.
 quality=best
+tmpfile2="$tmpdir/hicine-item.json"
+tmpfile4="$tmpdir/hicine-group.json"
+tmpfile5="$tmpdir/hicine-title.json"
 _ok=""
 _i=0
 while [ "$_i" -lt 5 ]; do
-    _links="$(printf '%s' "$_hic" | jq -r --argjson i "$_i" '.[$i].links // empty' 2>/dev/null)"
+    _hid="$(jq -r --argjson i "$_i" '.items[$i].id // empty' "$_hic" 2>/dev/null)"
     _i=$(( _i + 1 ))
-    [ -n "$_links" ] || continue
-    _ok="$(movie_playable "$(parse_links "$_links")" 2>/dev/null)"
+    [ -n "$_hid" ] || continue
+    printf '{"id":%s}' "$(printf '%s' "$_hid" | jq -sR '.')" > "$tmpfile2"
+    hicine_get "/hapi/t?c=$_hid" "$tmpfile5" || continue
+    hicine_enrich_item "$tmpfile5" || continue
+    _ok="$(jq -r '.links // empty' "$tmpfile2")"
     [ -n "$_ok" ] && break
 done
 [ -n "$_ok" ] || _fail "no hicine link resolved to a playable URL"
-echo "OK    hicine resolver          ${_ok%%\?*}"
+echo "OK    hicine resolver          ${_ok%%,*}"
 
 # hianime — the anime search. anidb_search dies on a challenge/429 page,
 # which means blocked, not broken.

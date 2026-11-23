@@ -5,11 +5,15 @@
 # coverage at all until the VICINE_LIB sourcing hook let this suite call the
 # real implementations instead of testing sed-extracted copies.
 # Usage: sh tests/series_select.sh
+# shellcheck disable=SC2034  # globals below are read by the sourced helpers
 
 . "$(dirname "$0")/lib.sh"
 
 SCRIPT="$(dirname "$0")/../vicine"
 load_vicine
+
+_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vicine-season.XXXXXX")"
+trap 'rm -rf "$_tmpdir"' EXIT
 
 # A series/episode count, the "how many did they ask for" narrowing used by
 # both -D flows and their confirm counts, and the episode-number↔count split
@@ -85,4 +89,34 @@ printf '%s\n' "$EP" | cut -f1 | grep -qx "$_end" \
 grep -qF 'select(.key | test("^season_[0-9]+$"))' "$SCRIPT" \
     || _fail "season_fields is gone; season_count went back to the 20-call scan"
 
-echo "PASS (22 checks)"
+# season_menu must list only seasons that exist. A provider can ship just
+# season 2 (Batman: Caped Crusader); 1..season_count offered a dead "Season 1"
+# that prompt_action then rejected with "No season data."
+_season_item="$_tmpdir/item.json"
+printf '%s' '{"title":"S","season_2":"Episode 1 : tok,720p"}' > "$_season_item"
+_saved_t2="$tmpfile2"; tmpfile2="$_season_item"
+tmpfile3="$_tmpdir/menu"
+_menu_cat() { cat; }
+menu() { _menu_cat "$@"; }
+[ "$(season_menu 2 "Seasons: ")" = "Season 2" ] || _fail "season_menu invented a missing season: $(season_menu 2 "Seasons: ")"
+printf '%s' '{"title":"S","season_1":"a","season_2":"b","season_3":"c"}' > "$_season_item"
+[ "$(season_menu 3 "Seasons: " | tr '\n' ' ')" = "Season 1 Season 2 Season 3 " ] || _fail "season_menu dropped a real season: $(season_menu 3 "Seasons: ")"
+tmpfile2="$_saved_t2"
+
+# season_count is the HIGHEST season number, not the number of seasons.
+# -D used it for the confirm label: a lone season 2 read "2 seasons", and a
+# single season would read "Season 1". Stub parse_episodes so no download runs.
+parse_episodes() { :; }
+mkdir -p "$_tmpdir/dl"
+download_dir="$_tmpdir/dl"; tmpfile3="$_tmpdir/dl-menu"; tmpfile5="$_tmpdir/dl-workers"
+quality=best; requested_eps=""; dl_jobs=1
+_dl_confirm() { download_all_item < /dev/null 2>&1 | grep 'Download ' | sed 's/.*(\([^)]*\)).*/\1/'; }
+printf '%s' '{"title":"S","contentType":"series","url_slug":"s","season_2":"E1"}' > "$_season_item"
+tmpfile2="$_season_item"
+[ "$(_dl_confirm)" = "Season 2" ] || _fail "lone season 2 labelled: $(_dl_confirm)"
+printf '%s' '{"title":"S","contentType":"series","url_slug":"s","season_2":"E1","season_5":"E2"}' > "$_season_item"
+[ "$(_dl_confirm)" = "2 seasons" ] || _fail "gapped seasons labelled: $(_dl_confirm)"
+printf '%s' '{"title":"S","contentType":"series","url_slug":"s","season_1":"E1"}' > "$_season_item"
+[ "$(_dl_confirm)" = "Season 1" ] || _fail "lone season 1 labelled: $(_dl_confirm)"
+
+echo "PASS (27 checks)"

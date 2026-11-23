@@ -15,13 +15,13 @@ SCRIPT="$(dirname "$0")/../vicine"
 grep -q 'curl_to="--connect-timeout 4"' "$SCRIPT" \
     || _fail "no connect gate: a dead host burns the whole --max-time before failing"
 
-# 1. catalogue fetches (trending/recent/browse/stats/history) are bounded
-grep -q '\$curl_exe \$curl_to -sf --max-time 20 "\${API}\${1}"' "$SCRIPT" \
-    || _fail "api_fetch() has no --max-time; a stalled endpoint hangs the catalogue menus forever"
+# 1. catalogue fetches (trending/recent/browse/history) are bounded
+grep -q '\$curl_exe \$curl_to -sf --max-time 20 -e "\${HICINE_BASE}/"' "$SCRIPT" \
+    || _fail "hicine_get() has no --max-time; a stalled endpoint hangs the catalogue menus forever"
 
-# 2. search is bounded — the fallback can never trigger without this
-grep -q '\$curl_exe \$curl_to -sf --max-time 20 "\${API}/api/search/\$(henc' "$SCRIPT" \
-    || _fail "cmd_search's curl has no --max-time; a slow server-1 hangs instead of falling through to hianime"
+# 2. search uses the bounded, non-dying getter so the fallback can trigger
+grep -q 'hicine_get "/hapi/search' "$SCRIPT" \
+    || _fail "cmd_search must use bounded hicine_get; hicine_fetch dies before the fallback"
 
 # 3. the self-update fetch is bounded
 grep -q 'curl \$curl_to -sfL --max-time 20 "\$_repo"' "$SCRIPT" \

@@ -28,9 +28,8 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 - **Download** with yt-dlp, ffmpeg, or curl
 - **Series support** — season/episode navigation with next/previous/replay controls
 - **Anime support** — dub/sub audio via hianime.at
-- **Automatic provider fallback** — when the primary catalogue (server-1)
-  has no result or is down, the search falls back to the hianime anime
-  catalogue
+- **Automatic provider fallback** — when the hicine catalogue has no result
+  or is down, the search falls back to the hianime anime catalogue
 
 > Anime streams are pulled from the ZokoAnime server. Some titles only offer
 > MegaPlay-based servers, which can't be resolved by the script — those show
@@ -226,7 +225,6 @@ vicine -t movies               # Browse trending movies
 vicine -r                      # Recently added
 vicine -d euphoria             # Download instead of play
 vicine -b bollywood_movies --page 2 --limit 50   # Browse a collection page
-vicine -S                      # Show catalogue stats
 vicine -q 720p -e 3 stranger things   # Play ep 3 in 720p
 vicine -q 1080p -e 5-8 stranger things # Play eps 5-8 in 1080p
 vicine -c                      # Continue from watch history
@@ -246,10 +244,15 @@ yt-dlp's own progress bar; set `VICINE_DL_JOBS=2` (or more) for parallel
 batches — per-job bars are suppressed then and a `[####------] done/total`
 tally is shown instead. Movies keep the flat layout. An anime split into two
 cours lists its episode numbers twice, so the second run goes to
-`season-2/` rather than overwriting the first. A `-d`/`-D` run that could
-not download at least one episode exits 1; interactive sessions always
-exit 0. On Termux after `termux-setup-storage`, the default is
+`season-2/` rather than overwriting the first. A `-d`/`-D` run exits 1 if any
+episode download fails. A play session exits 0 unless you set
+`--exit-after-play`. That flag returns the player exit code. On Termux after
+`termux-setup-storage`, the default is
 `~/storage/downloads/Vicine` so the files land in shared storage.
+
+The hicine API has no anime field. Only `-b anime` marks items as anime, so
+only that path retries missing episodes through hianime during `-D`. For a
+title found with a normal search, use `-A` or `-b anime` to get that retry.
 
 ### Options
 
@@ -262,7 +265,6 @@ exit 0. On Termux after `termux-setup-storage`, the default is
 | `-t`, `--trending` | Show trending content |
 | `-r`, `--recent` | Show recently added |
 | `-b`, `--browse` | Browse a collection |
-| `-S`, `--stats` | Show catalogue stats |
 | `-q`, `--quality` | Select quality (`best`, `480p`, `720p`, `1080p`, `2160p`; `4K` accepted as an alias) |
 | `-e`, `--episode` | Play episode `N`, range `N-M`, or `-1` (latest); ranges also drive `-d` and `-D` downloads |
 | `-c`, `--continue` | Continue from watch history |

@@ -108,7 +108,6 @@ ${C_WHITE}Options:${C_RESET}
     ${C_CYAN}-t${C_RESET}, ${C_CYAN}--trending${C_RESET}          Show trending content
     ${C_CYAN}-r${C_RESET}, ${C_CYAN}--recent${C_RESET}            Show recently added
     ${C_CYAN}-b${C_RESET}, ${C_CYAN}--browse${C_RESET}            Browse a collection
-    ${C_CYAN}-S${C_RESET}, ${C_CYAN}--stats${C_RESET}             Show catalogue stats
     ${C_CYAN}-q${C_RESET}, ${C_CYAN}--quality${C_RESET}           Select quality (best/480p/720p/1080p/2160p/4K)
     ${C_CYAN}-e${C_RESET}, ${C_CYAN}--episode${C_RESET}           Play episode N, N-M, or -1 (latest)
     ${C_CYAN}-n${C_RESET}, ${C_CYAN}--select-nth${C_RESET}        Select result by index N (non-interactive)
@@ -209,11 +208,163 @@ on_sigterm() { _exit_code=143; cleanup; }
 
 # ─── API ────────────────────────────────────────────────────────────────────
 
-api_fetch() {
-    # $1 = endpoint, $2 = output file
-    # bounded: provider_chain can only fire on curl FAILURE, so an unbounded
-    # request hangs the whole interactive search instead of falling through
-    $curl_exe $curl_to -sf --max-time 20 "${API}${1}" -o "$2" || die "API request failed: ${1}"
+# ─── Hicine public API ──────────────────────────────────────────────────────
+
+# GET against the public API. Reads go through hicine_fetch (die on failure);
+# token-chain hops must survive per-attempt failures, so they call hicine_get.
+hicine_get() { # $1 = endpoint, $2 = output file; rc != 0 on HTTP error, no die
+    # Clear the output first. A failed token request must not leave the previous
+    # host's JSON in place for the caller to parse as its own answer.
+    : > "$2"
+    $curl_exe $curl_to -sf --max-time 20 -e "${HICINE_BASE}/" "${HICINE_BASE}${1}" -o "$2"
+}
+
+hicine_fetch() { # $1 = endpoint, $2 = output file; dies on failure (read paths)
+    hicine_get "$1" "$2" || die "API request failed: ${1}"
+}
+
+# Map a /hapi list response (top-level array or {items:[...]}) into the
+# internal item shape the pickers consume: {title, contentType, url_slug}.
+hicine_map_list() { # $1 = response file, $2 = top-level key holding the array -> mapped array back into $1
+    jq -c --arg k "$2" '[.[$k][]? | {title, contentType: (if .kind == "series" then "series" else "movie" end), url_slug: .id}]' "$1" > "${1}.map" && mv "${1}.map" "$1"
+}
+
+# Host token -> media URL through the /hapi/dl + /hapi/go token chain. Prints
+# the URL; returns 1 when the host has no live option (an expired token is not
+# fatal here — the caller moves to the next candidate). $2 overrides the scratch
+# file so parallel resolution can keep one per call.
+hicine_host_url() { # $1 = host token, [$2 = scratch file]
+    _hu_out="${2:-$tmpfile5}"
+    hicine_get "/hapi/dl?k=${1}" "$_hu_out"
+    # direct options first; a dead first option must not discard the host
+    _hu_opts="$(jq -r '[.options[]? | select(.kind == "direct") | .k] + [.options[]? | select(.kind != "direct") | .k] | .[]' "$_hu_out")"
+    for _hu_opt in $_hu_opts; do
+        hicine_get "/hapi/go?k=${_hu_opt}&m=u" "$_hu_out"
+        _hu_url="$(jq -r '.url // empty' "$_hu_out")"
+        [ -n "$_hu_url" ] || continue
+        printf '%s' "$_hu_url"
+        return 0
+    done
+    return 1
+}
+
+# Resolve a stored "hapi:<group>:<ep|->" token into a direct media URL. The
+# "-' form means the group's first item (movie or whole-season archive).
+# $2 is a private scratch file: enrichment stores tokens, so this runs in the
+# play/download workers and must not share tmpfile4/tmpfile5 with another job.
+hicine_token_url() { # $1 = token, $2 = scratch file
+    _tu_raw="${1#hapi:}"
+    _tu_grp="${_tu_raw%%:*}"
+    _tu_ep="${_tu_raw#*:}"
+    [ -n "$_tu_grp" ] && [ "$_tu_grp" != "$_tu_raw" ] || return 1
+    hicine_get "/hapi/g?k=${_tu_grp}" "$2"
+    if [ "$_tu_ep" = "-" ]; then
+        _tu_hosts="$(jq -r '.items[0].hosts[]? | .k' "$2")"
+    else
+        case "$_tu_ep" in
+            ''|*[!0-9]*) return 1 ;;
+        esac
+        _tu_hosts="$(jq -r --argjson e "$_tu_ep" '[.items[] | select(.ep == $e) | .hosts[]? | .k] | .[]' "$2")"
+    fi
+    for _tu_hk in $_tu_hosts; do
+        _tu_url="$(hicine_host_url "$_tu_hk" "$2")" || continue
+        [ -n "$_tu_url" ] || continue
+        printf '%s' "$_tu_url"
+        return 0
+    done
+    return 1
+}
+
+# Enrich the selected item (tmpfile2) via its /hapi/t title: movies get a
+# playable .links row ("URL,quality,size"); series get season_<n> episode texts.
+# $1 = t payload file to merge (default: fetch /hapi/t for the selected item).
+# Returns 1 when there is no id to resolve (nothing to enrich).
+hicine_enrich_item() { # [ $1 = t payload file ]
+    _tf="${1:-}"
+    if [ -z "$_tf" ]; then
+        _slug="$(jq -r '.url_slug // empty' "$tmpfile2" 2>/dev/null)"
+        [ -n "$_slug" ] || return 1
+        _tf="$tmpfile5"
+        hicine_get "/hapi/t?c=${_slug}" "$_tf" || return 1
+    fi
+    jq -s '.[0] + .[1]' "$tmpfile2" "$_tf" > "${tmpfile2}.map" && mv "${tmpfile2}.map" "$tmpfile2"
+    _id="$(jq -r '(.url_slug // .id) // ""' "$tmpfile2" 2>/dev/null)"
+    [ -n "$_id" ] || return 1
+    _kind="$(jq -r '.kind // "movie"' "$tmpfile2")"
+    if [ "$_kind" = "series" ]; then
+        # one season_<n> text per distinct season the title carries; the key is
+        # the season number, matching the season menu's 1..N numbering. Every
+        # quality group is merged into the text so quality switching and
+        # dead-link fallback keep working.
+        _seas="$(jq -r '[.groups[]? | select(.season != null) | (.season | tostring)] | unique | .[]' "$tmpfile2")"
+        for _s in $_seas; do
+            _st="$(hicine_season_text "$_s")"
+            [ -n "$_st" ] || continue
+            jq -c --arg k "$_s" --arg t "$_st" '.["season_" + ($k | tostring)] = $t' "$tmpfile2" > "${tmpfile2}.map" && mv "${tmpfile2}.map" "$tmpfile2"
+            case "$_st" in
+                "Season "*) jq -c --arg t "$_st" '.season_zip = ((.season_zip // "") + $t + "\n")' "$tmpfile2" > "${tmpfile2}.map" && mv "${tmpfile2}.map" "$tmpfile2" ;;
+            esac
+        done
+        return 0
+    fi
+    # movie: one .links row per quality group so the quality menu, -D and
+    # movie_playable's dead-link fallback see every available variant. Tokens
+    # are resolved on demand; show_info and quality menus never hit the chain.
+    _links="$(
+        jq -r '[.groups[]? | select(.season == null) | [(.k // .zip[0]?.k // ""), (.quality // ""), (.size // "")]] | .[] | @tsv' "$tmpfile2" \
+        | awk -F'\t' '!seen[$1]++' \
+        | while IFS='	' read -r _gk _gq _gz; do
+            [ -n "$_gk" ] || continue
+            printf 'hapi:%s:-,%s,%s\n' "$_gk" "$_gq" "$_gz"
+        done | awk 'NR>1{printf "\n"} {printf "%s",$0}'
+    )"
+    [ -n "$_links" ] || return 1
+    jq -c --arg l "$_links" '.links = $l' "$tmpfile2" > "${tmpfile2}.map" && mv "${tmpfile2}.map" "$tmpfile2"
+}
+
+# Season text for one season. Per-episode lines are
+# "Episode N : hapi:G,EP,SIZE,QUAL : ..." (last = best). Resolution is deferred
+# to play/download time so -i and the quality menus never walk the token chain.
+# Each /hapi/g group payload is fetched exactly once.
+hicine_season_text() { # $1 = season number; groups come from tmpfile2
+    _sn="$1"
+    _groups="$(jq -r --arg s "$_sn" '[.groups[]? | select(.season != null and ((.season | tostring) == $s)) | [(.k // .zip[0]?.k // ""), (.quality // ""), (.size // "")]] | .[] | @tsv' "$tmpfile2" \
+        | awk -F'\t' '!seen[$1]++')"
+    [ -n "$_groups" ] || return 1
+
+    # group token, quality, size, its episode numbers. One fetch per group,
+    # not one per (episode x group) as the old eager resolver did.
+    _gm="$(printf '%s\n' "$_groups" | while IFS='	' read -r _gk _gq _gz; do
+        [ -n "$_gk" ] || continue
+        _ge="$(hicine_group_eps "$_gk" | tr '\n' ' ')"
+        printf '%s	%s	%s	%s\n' "$_gk" "$_gq" "$_gz" "$_ge"
+    done)"
+    _eps="$(printf '%s\n' "$_gm" | cut -f4 | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -nu)"
+
+    if [ -n "$_eps" ]; then
+        printf '%s\n' "$_eps" | while read -r _ep; do
+            _variants="$(printf '%s\n' "$_gm" | while IFS='	' read -r _gk _gq _gz _ge; do
+                printf '%s\n' $_ge | grep -qx "$_ep" || continue
+                printf 'hapi:%s:%s,%s,%s' "$_gk" "$_ep" "$_gz" "$_gq"
+                printf ' : '
+            done | sed 's/ : $//')"
+            [ -n "$_variants" ] || continue
+            printf 'Episode %s : %s\n' "$_ep" "$_variants"
+        done
+        return 0
+    fi
+
+    # no numbered episodes: whole-season archive from the first group. The
+    # last comma field must be the quality — play_season_zip matches on $NF.
+    printf '%s\n' "$_gm" | while IFS='	' read -r _gk _gq _gz _ge; do
+        printf 'Season %s : hapi:%s:-,%s,%s\n' "$_sn" "$_gk" "$_gz" "$_gq"
+        break
+    done
+}
+
+hicine_group_eps() { # $1 = group token -> episode numbers, one per line
+    hicine_get "/hapi/g?k=${1}" "$tmpfile4"
+    jq -r '.items[]? | select(.ep != null) | .ep' "$tmpfile4"
 }
 
 # ─── URL resolution ─────────────────────────────────────────────────────────
@@ -229,6 +380,19 @@ is_http_url() {
 
 resolve_stream_url() {
     _workers_url="$1"
+    # Enrichment stores hapi tokens instead of media URLs so -i and the
+    # quality menus stay cheap. Resolve them here, at the point of use, with a
+    # private scratch file: download workers call this concurrently.
+    case "$_workers_url" in
+        hapi:*)
+            _rs_tmp="$(mktemp "${tmpdir:-${TMPDIR:-/tmp}}/VICINE.hapi.XXXXXX" 2>/dev/null)" || return 1
+            _rs_url="$(hicine_token_url "$_workers_url" "$_rs_tmp")" && _rs_rc=0 || _rs_rc=1
+            rm -f "$_rs_tmp"
+            [ "$_rs_rc" -eq 0 ] || return 1
+            printf '%s' "$_rs_url"
+            return 0
+            ;;
+    esac
     # every URL below is built from this one, so refuse it before any use
     is_http_url "$_workers_url" || return 1
     _vcloud_val="$(printf "%s" "$_workers_url" | sed -n 's/.*vcloud=//p' | sed 's/[& ].*//')"
@@ -485,9 +649,12 @@ show_info() {
     while [ "$_sn" -le "$_sc" ]; do
         _season_text=$(jq -r ".season_${_sn} // empty" "$tmpfile2")
         if [ -n "$_season_text" ]; then
-            _ep_count=$(parse_episodes "$_season_text" "$quality" | grep -c . || true)
+            case "$_season_text" in
+                "Season "*) _ep_label="archive" ;;
+                *)          _ep_label="$(parse_episodes "$_season_text" "$quality" | grep -c . || true) episodes" ;;
+            esac
             printf "\n"
-            printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s episodes)${C_RESET}\n" "$_sn" "$_ep_count"
+            printf "  ${C_CYAN}Season %s${C_RESET} ${C_DIM}(%s)${C_RESET}\n" "$_sn" "$_ep_label"
         fi
         _sn=$(( _sn + 1 ))
     done
@@ -518,13 +685,19 @@ season_count() {
     season_fields | awk -F'\t' '$1+0 > m { m = $1+0 } END { print m+0 }'
 }
 
-# "Season 1..N" into $tmpfile3, offered as a menu. $3 = extra menu flags.
-season_menu() { # count, prompt, extra flags
+# Just the numbers of the non-empty season_N fields, numeric order. Can't cut
+# season_fields: a season text is multi-line, so its episode rows have no tab.
+season_numbers() {
+    [ -f "$tmpfile2" ] || return 1
+    jq -r 'to_entries[] | select(.key | test("^season_[0-9]+$")) | select((.value // "") != "") | .key[7:]' "$tmpfile2" 2>/dev/null | sort -n
+}
+
+# Real season numbers into $tmpfile3, offered as a menu. $3 = extra menu flags.
+# 1..max invents empty seasons that fail on selection.
+season_menu() { # count (unused), prompt, extra flags
     printf "" > "$tmpfile3"
-    _smi=1
-    while [ "$_smi" -le "$1" ]; do
+    season_numbers | while read -r _smi; do
         printf 'Season %s\n' "$_smi" >> "$tmpfile3"
-        _smi=$(( _smi + 1 ))
     done
     menu "$2" $3 < "$tmpfile3"
 }
@@ -677,15 +850,18 @@ cmd_history() {
     _type=$(printf "%s" "$_entry" | cut -f3)
     _slug=$(printf "%s" "$_entry" | cut -f1 | sed 's/[^A-Za-z0-9_-]//g')
     if [ "$_type" = "series" ]; then
-        api_fetch "/api/series/${_slug}" "$tmpfile2"
+        hicine_fetch "/hapi/t?c=${_slug}" "$tmpfile5"
+        jq -c --arg c "$_slug" '{title: (.title // .meta.name // ""), contentType: "series", url_slug: $c}' "$tmpfile5" > "$tmpfile2"
     elif [ "$_type" = "anime" ]; then
         anime_resume "$_slug" "$(printf "%s" "$_entry" | cut -f2)" "$resume_ep"
         resume_season=""
         resume_ep=""
         return
     else
-        api_fetch "/api/movies/${_slug}" "$tmpfile2"
+        hicine_fetch "/hapi/t?c=${_slug}" "$tmpfile5"
+        jq -c --arg c "$_slug" '{title: (.title // .meta.name // ""), contentType: "movie", url_slug: $c}' "$tmpfile5" > "$tmpfile2"
     fi
+    hicine_enrich_item "$tmpfile5"
     show_info
     [ "$info_only" -eq 0 ] && prompt_action
     resume_season=""
@@ -782,6 +958,7 @@ play_url() {
             _pl_rc=0
             ;;
     esac
+    return "$_pl_rc"
 }
 
 # ─── Download ───────────────────────────────────────────────────────────────
@@ -1377,12 +1554,12 @@ prompt_action() {
 # ─── Commands ───────────────────────────────────────────────────────────────
 
 # The single place that decides WHEN to fall through and to WHOM.
-#   $1 = query, $2 = why server-1 came up empty (for the message)
+#   $1 = query, $2 = why the hicine API came up empty (for the message)
 # Returns 1 without touching anything when only an info card was wanted —
 # -i should not launch a full playback search on a backup.
 provider_chain() {
     if [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ]; then
-        warn "No result on server-1 ($2) — trying anime."
+        warn "No result on ${HICINE_BASE} ($2) — trying anime."
         _backup_used=1
         # cmd_anime exits 0 when it comes back empty-handed, so a plain `||`
         # would look like a success. _in_chain turns cmd_anime's "no results"
@@ -1397,7 +1574,7 @@ provider_chain() {
 cmd_search() {
     _query="$1"
     [ -z "$_query" ] && die "Missing search query"
-    # server-1 matches titles literally, so "spider man" misses where
+    # the hicine API matches titles literally, so "spider man" misses where
     # "spider-man" hits and "super man" only finds "superman": on a miss,
     # retry with the whitespace joined by hyphens, then with it removed
     _alt=$(printf '%s' "$_query" | tr -s '[:space:]' '-' | sed 's/^-*//; s/-*$//')
@@ -1411,18 +1588,20 @@ cmd_search() {
     [ -n "$_joined" ] && set -- "$@" "$_joined"
     for _cand in "$@"; do
         [ "$_cand" != "$_query" ] && info "No match; retrying: $_cand"
-        if ! $curl_exe $curl_to -sf --max-time 20 "${API}/api/search/$(henc "$_cand")" -o "$tmpfile"; then
+        if ! hicine_get "/hapi/search?q=$(henc "$_cand")&page=1" "$tmpfile"; then
             # die before the chain: an unreachable API is not the same as a miss,
             # and -i must not turn a dead endpoint into a full fallback search
-            [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${API} unreachable"
+            [ "$info_only" -eq 0 ] || [ "$download_all_mode" -eq 1 ] || die "Search failed: ${HICINE_BASE} unreachable"
             # the chain's result must reach the process exit for -D this time
             _pc_rc=0
             provider_chain "$_query" "API unreachable" || _pc_rc=$?
             return "$_pc_rc"
         fi
+        hicine_map_list "$tmpfile" items
         select_item
         _sel_rc=$?
         if [ "$_sel_rc" -eq 0 ]; then
+            hicine_enrich_item
             if [ "$info_only" -eq 1 ]; then show_info; else prompt_action; fi
             # show/prompt's status is the play-or-download result the caller
             # (-d/-D) must see; a bare `return 0` flattened it
@@ -1439,10 +1618,15 @@ cmd_search() {
 
 # -t/-r share one handler: the endpoints differ only in the API root; the
 # picked item must reach the same downstream as a search (info/-D/prompt)
-cmd_catalog() { # $1 = API root, $2 = sub-type, $3 = display label
-    info "Loading ${3}..."
-    api_fetch "${1}${2:+/${2}}?limit=${result_limit}" "$tmpfile"
+cmd_catalog() { # $1 = home payload key, $2 = display label, $3 = contentType filter
+    info "Loading ${2}..."
+    hicine_fetch "/hapi/home" "$tmpfile"
+    hicine_map_list "$tmpfile" "$1"
+    if [ -n "$3" ]; then
+        jq -c --arg ct "$3" 'map(select(.contentType == $ct))' "$tmpfile" > "${tmpfile}.ct" && mv "${tmpfile}.ct" "$tmpfile"
+    fi
     select_item || return 0
+    hicine_enrich_item
     if [ "$download_all_mode" = 1 ]; then
         download_all_item
         return
@@ -1451,20 +1635,31 @@ cmd_catalog() { # $1 = API root, $2 = sub-type, $3 = display label
     [ "$info_only" -eq 0 ] && prompt_action
 }
 
-cmd_trending() { cmd_catalog "/api/trending" "${1:-}" "trending ${1:-content}"; }
-cmd_recent() { cmd_catalog "/api/recent" "${1:-}" "recent ${1:-content}"; }
+cmd_trending() { # ${1} = movies|series; /hapi/home serves one mixed trending row
+    _ct=""
+    case "${1:-}" in
+        movies) _ct=movie ;;
+        series) _ct=series ;;
+    esac
+    cmd_catalog trending "trending ${1:-content}" "$_ct"
+}
+cmd_recent() { cmd_catalog newEps "recent ${1:-content}"; }
 
 cmd_browse() {
     _collection="$1"
     [ -z "$_collection" ] && die "Missing collection name"
     info "Loading $_collection..."
-    api_fetch "/api/$(henc "$_collection")?page=$(henc "$browse_page")&limit=$(henc "$browse_limit")" "$tmpfile"
-    # Unwrap { data: [...] } if present, inject known contentType
-    if jq -e '.data' "$tmpfile" >/dev/null 2>&1; then
-        jq --arg ct "$browse_type" '.data | map(.contentType = $ct)' "$tmpfile" > "${tmpfile}.tmp"
-        mv "${tmpfile}.tmp" "$tmpfile"
+    hicine_fetch "/hapi/browse?${browse_type}&page=$(henc "$browse_page")" "$tmpfile"
+    hicine_map_list "$tmpfile" items
+    # hicine has no anime field; -b anime is the path that used to stamp this,
+    # and download_all_item's hianime gap-fill retry is gated on it.
+    if [ "$_collection" = "anime" ]; then
+        jq -c 'map(.contentType = "anime")' "$tmpfile" > "${tmpfile}.an" && mv "${tmpfile}.an" "$tmpfile"
     fi
+    # the new API ignores a limit param, so apply it to the mapped list here
+    jq -c ".[0:${browse_limit}]" "$tmpfile" > "${tmpfile}.lim" && mv "${tmpfile}.lim" "$tmpfile"
     select_item || return 0
+    hicine_enrich_item
     # -D reaches every catalogue entry point: hand the picked item to the
     # shared dody like the search/download_all case does
     if [ "$download_all_mode" = 1 ]; then
@@ -1473,14 +1668,6 @@ cmd_browse() {
     fi
     [ "$info_only" -eq 1 ] && show_info
     [ "$info_only" -eq 0 ] && prompt_action
-}
-
-cmd_stats() {
-    api_fetch "/rpc/stats" "$tmpfile"
-    printf "\n  ${C_CYAN}${C_BOLD}VICINE catalogue${C_RESET}\n"
-    printf "  ${C_DIM}$(hr 30)${C_RESET}\n"
-    jq -r 'to_entries[] | "  \(.key): \(.value)"' "$tmpfile"
-    printf "\n"
 }
 
 # ─── Anime provider
@@ -1933,10 +2120,13 @@ if is_series; then
         fi
     fi
     _season_selected() { [ -z "$_sel_seasons" ] && return 0; printf '%s\n' "$_sel_seasons" | grep -qx "$1"; }
+    # season_count is the highest number, not a count: with season 2 alone it
+    # would report "2 seasons", and with 2+5 the label would overcount.
+    _all_seasons="$(season_numbers)"
     if [ -n "$_sel_seasons" ]; then
         _nsel=$(printf '%s\n' "$_sel_seasons" | wc -l | tr -d ' ')
     else
-        _nsel="$_sc"
+        _nsel=$(printf '%s\n' "$_all_seasons" | grep -c . || true)
     fi
 
     # Count episodes across all selected seasons using the same parser we download from
@@ -1955,7 +2145,7 @@ if is_series; then
 
     # season/episode labels for the confirm: say WHICH season, and pluralize
     if [ "$_nsel" -eq 1 ]; then
-        _sel_label="Season ${_sel_seasons:-1}"
+        _sel_label="Season ${_sel_seasons:-$_all_seasons}"
     else
         _sel_label="$_nsel seasons"
     fi
@@ -2139,7 +2329,7 @@ _title="$(jq -r '.title' "$tmpfile2" | hdec)"
 _links=$(jq -r '.links // empty' "$tmpfile2")
 if [ -z "$_links" ]; then
     # item-level dead entry: nothing to download and nothing to gap-retry
-    warn "No links on server-1 — nothing else to try."
+    warn "No links on ${HICINE_BASE} — nothing else to try."
     return 0
 fi
 _parsed="$(parse_links "$_links")"
@@ -2158,7 +2348,8 @@ do_download "$_mresolved" "$_msafe"
 _mrc=$?
 [ "$_mrc" -ge 130 ] && exit "$_mrc"
 if [ "$_mrc" -ne 0 ]; then
-    warn "server-1 download failed."
+    warn "download failed."
+    return 1
 else
     # -D sets info_only, so prompt_action never ran and _slug is unset
     update_history "$(jq -r '.url_slug // ""' "$tmpfile2" 2>/dev/null)" "$_title" movie 0 0
@@ -2266,7 +2457,7 @@ umask 077
 # Config
 # Provider order: hicine (this API) is always tried first; hianime (anime)
 # is the fallback, via provider_chain().
-API="https://api.hicine.sbs"
+HICINE_BASE="https://hicine.biz"
 # HiAnime backend (hianimes.se is a page-only mirror: its /search and /api/*
 # routes 307 to /home, so the API calls below must go to hianime.at).
 anime_base="https://hianime.at"
@@ -2295,7 +2486,6 @@ info_only=0
 download_all_mode=0
 menu_program="${VICINE_MENU:-fzf}"
 menu_extra_flags="${VICINE_MENU_FLAGS:-}"
-result_limit="${VICINE_RESULT_LIMIT:-200}"
 quality="${VICINE_QUALITY:-best}"
 requested_eps=""
 select_nth="${VICINE_SELECT_NTH:-}"
@@ -2358,7 +2548,6 @@ while [ $# -gt 0 ]; do
         -t|--trending)    search_mode="trending" ;;
         -r|--recent)      search_mode="recent" ;;
         -b|--browse)      search_mode="browse"; shift; _browse_col="$1"; [ -z "$_browse_col" ] && die "Missing collection name for -b" ;;
-        -S|--stats)       search_mode="stats" ;;
         -i|--info)        [ -z "$search_mode" ] && search_mode="info"; info_only=1 ;;
         -d|--download)    player_function="download" ;;
         -D|--download-all) info_only=1; download_all_mode=1; [ -z "$search_mode" ] && search_mode="download_all" ;;
@@ -2476,16 +2665,15 @@ case "$search_mode" in
     recent)    cmd_recent "$query" ;;
     browse)
         case "$_browse_col" in
-            hollywood_movies|movies) browse_type="movies" ;;
-            hollywood_series|series) browse_type="series" ;;
-            bollywood_series)        browse_type="bolly_series" ;;
-            bollywood_movies)        browse_type="bolly_movies" ;;
-            anime)                   browse_type="anime" ;;
+            hollywood_movies|movies) browse_type="type=movie&industry=hollywood" ;;
+            hollywood_series|series) browse_type="type=series&industry=hollywood" ;;
+            bollywood_series)        browse_type="type=series&industry=bollywood" ;;
+            bollywood_movies)        browse_type="type=movie&industry=bollywood" ;;
+            anime)                   browse_type="type=anime" ;;
             *)                       browse_type="" ;;
         esac
         cmd_browse "$_browse_col"
         ;;
-    stats)     cmd_stats ;;
     continue)  cmd_history ;;
     clear_history) cmd_clear_history ;;
     info)

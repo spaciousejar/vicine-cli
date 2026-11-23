@@ -4,13 +4,14 @@ For usage and install options see the [README](README.md); for contribution
 rules [CONTRIBUTING](CONTRIBUTING.md). What follows is how the scraping
 works.
 
-vicine scrapes two backends: **hicine** (movies/series) and **hianime**
-(anime). Both are plain HTTP calls wrapped in POSIX shell — no build step,
+vicine reads two backends: **hicine** (movies/series) through its public
+`/hapi` JSON API at `https://hicine.biz`, and **hianime** (anime) through
+HTTP/HTML. Both are plain HTTP calls wrapped in POSIX shell — no build step,
 no frameworks.
 
 ## Provider fallback (hicine → hianime)
 
-Search starts on hicine (server-1). If it returns nothing or the API is
+Search starts on hicine. If it returns nothing or the API is
 unreachable → **status codes matter**: `select_item` returns `1` for
 "no results", `2` for "user cancelled" (cancelling must NOT trigger the
 chain). On a genuine miss `provider_chain` runs `cmd_anime`. `-A` forces
@@ -25,11 +26,16 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 
 ## Movie/series flow (hicine)
 
-1. `cmd_search` → `GET {API}/api/search/{encoded_query}` (`API` defaults to
-   `https://api.hicine.sbs`), a JSON array saved to a temp file.
+1. `cmd_search` → `GET https://hicine.biz/hapi/search?q={encoded_query}&page=1`,
+   whose `{items:[...]}` is mapped to `{title, contentType, url_slug}` rows.
+   A miss retries with whitespace hyphenated, then removed.
 2. `select_item` offers the results (fzf/rofi/dmenu or `-n`), writes the
-   chosen item JSON to `tmpfile2`. Items carry `title`, `url_slug`,
-   `contentType`, `links`, `season_N` fields.
+   chosen item JSON to `tmpfile2`. `hicine_enrich_item` then fetches
+   `/hapi/t?c=<id>` and fills in the same `links` / `season_N` fields the
+   older API supplied directly, using deferred `hapi:` tokens. The
+   `/hapi/g?k=` → `/hapi/dl?k=` → `/hapi/go?k=<opt>&m=u` chain (the last hop
+   needs `Referer: https://hicine.biz/`) runs at play/download time, not here,
+   so `-i` and the quality menus make no token requests.
 3. `prompt_action` splits on `is_series`: seasons(`season_N`) → episodes,
    otherwise movies → `links`.
 4. Series: `parse_episodes` turns each `Episode N : URL,SIZE,QUALITY :
@@ -42,16 +48,17 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
    200, JSON, 404 bodies are rejected like `_stage_ok` does for downloads).
    Useless dead best-variant entries are why: sources lose files without
    losing rows.
-6. `resolve_stream_url` resolves the workers URLs: a `vcloud=` token is
-   scraped via `{base}/api/links?vcloud=…` (retried up to 5× while
-   `"tokens":{}`), then `{base}/go?type=…&vcloud=…&ts=…&sig=…` redirects to
-   the real CDN URL. URLs with an empty `vcloud=` are dead API placeholders
-   and fail resolution (skip, don't pass through).
+6. `resolve_stream_url` passes the direct URL from `/hapi/go` through. Its
+   older `vcloud=` branch (token map via `{base}/api/links`, then
+   `{base}/go?type=…`) remains for non-hicine sources; an empty `vcloud=`
+   is a dead placeholder and fails resolution.
 7. `-D` narrows downloads per `-e N / N-M / -1` via `eps_by_request`
    (`tests/eps_by_request.sh`) — the same helper feeds the confirm count so
    the prompt can't disagree with what downloads. Anime-type hicine titles
    with missing episodes are gap-filled through hianime into the same
-   `$_safe` folder.
+   `$_safe` folder. Only `-b anime` sets that marker: `/hapi/search` rows have
+   no anime field (`api.md` records the shape), so a search-found title gets
+   no gap-fill. Use `-A` or `-b anime` for those titles.
 
 ## Anime flow (hianime)
 
@@ -88,7 +95,7 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 - Trace a run: `sh -x vicine <query> -n 0` (auto-picks the first result).
 - Probe an endpoint by hand:
   ```sh
-  curl -s "https://api.hicine.sbs/api/search/one%20piece"
+  curl -s "https://hicine.biz/hapi/search?q=one%20piece&page=1"
   curl -s "https://hianime.at/api/theme/episode/list/one-piece-100"
   ```
 - Provider broke? The failure mode is usually one regex not matching the
