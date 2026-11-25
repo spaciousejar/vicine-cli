@@ -20,7 +20,7 @@ jobs:
       # gh resolves the repo from the git checkout; without this the step
       # failed with "fatal: not a git repository" and no audit issue was ever
       # created
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Open audit issue if none is open
         env:
