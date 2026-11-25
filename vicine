@@ -923,9 +923,9 @@ play_url() {
             ;;
         *mpv*)
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup "$player_function" $_hdr --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
+                nohup "$player_function" $_hdr --force-seekable=yes --no-ytdl --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
             else
-                "$player_function" $_hdr --force-media-title="$_name" "$_url"
+                "$player_function" $_hdr --force-seekable=yes --no-ytdl --force-media-title="$_name" "$_url"
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
@@ -1579,13 +1579,17 @@ cmd_search() {
     # retry with the whitespace joined by hyphens, then with it removed
     _alt=$(printf '%s' "$_query" | tr -s '[:space:]' '-' | sed 's/^-*//; s/-*$//')
     _joined=$(printf '%s' "$_query" | tr -d '[:space:]')
+    _nodigits=$(printf '%s' "$_query" | sed 's/[0-9][0-9]*//g; s/[[:space:]]*$//; s/^[[:space:]]*//')
     [ "$_alt" = "$_query" ] && _alt=
     [ "$_joined" = "$_query" ] && _joined=
     [ "$_joined" = "$_alt" ] && _joined=
+    [ "$_nodigits" = "$_query" ] && _nodigits=
+    [ -z "$_nodigits" ] && _nodigits=
     info "Searching: $_query"
     set -- "$_query"
     [ -n "$_alt" ] && set -- "$@" "$_alt"
     [ -n "$_joined" ] && set -- "$@" "$_joined"
+    [ -n "$_nodigits" ] && set -- "$@" "$_nodigits"
     for _cand in "$@"; do
         [ "$_cand" != "$_query" ] && info "No match; retrying: $_cand"
         if ! hicine_get "/hapi/search?q=$(henc "$_cand")&page=1" "$tmpfile"; then
@@ -1598,6 +1602,40 @@ cmd_search() {
             return "$_pc_rc"
         fi
         hicine_map_list "$tmpfile" items
+        # Fuzzy API can return irrelevant rows. Rank by title token overlap
+        # against the query. For numbered queries ("Jailer 2"), only accept
+        # candidates whose title contains the number and at least one query word.
+        jq -c --arg q "$_query" '
+          def toks: ascii_downcase | gsub("[^a-z0-9]+";" ") | gsub("^ +| +$";"") | split(" ") | map(select(length>0));
+          ($q|toks) as $qt |
+          ($qt|map(select(test("^[0-9]+$")|not))|map(select(length>1))) as $qwords |
+          ($qt|map(select(test("^[0-9]+$")))) as $qnums |
+          [ .[] | . as $it | (($it.title//"")|toks) as $tt |
+            ([ $qwords[] as $w | select($tt|index($w)) | 1 ] | length) as $ws |
+            ([ $qnums[]  as $n | select($tt|index($n)) | 1 ] | length) as $ns |
+            {it:$it, ws:$ws, ns:$ns, tlen:($tt|length)}
+          ] as $scored |
+          ($scored | map(select(
+              if ($qnums|length) > 0 then (.ns == ($qnums|length) and .ws > 0)
+              else (.ws > 0) end
+            ))) as $filtered |
+          (if ($filtered|length) > 0 then $filtered else $scored end)
+          | sort_by(-.ns, -.ws, .tlen)
+          | map(.it)
+        ' "$tmpfile" > "${tmpfile}.rank" && mv "${tmpfile}.rank" "$tmpfile"
+        if printf '%s' "$_query" | grep -q '[0-9]'; then
+            _has=$(jq -r --arg q "$_query" '
+              def toks: ascii_downcase | gsub("[^a-z0-9]+";" ") | gsub("^ +| +$";"") | split(" ") | map(select(length>0));
+              ($q|toks) as $qt |
+              ($qt|map(select(test("^[0-9]+$")|not))|map(select(length>1))) as $qwords |
+              ($qt|map(select(test("^[0-9]+$")))) as $qnums |
+              [ .[] | ((.title//"")|toks) as $tt |
+                ([ $qwords[] as $w | select($tt|index($w)) | 1 ] | length) as $ws |
+                ([ $qnums[]  as $n | select($tt|index($n)) | 1 ] | length) as $ns |
+                select($ns == ($qnums|length) and $ws > 0) ] | length
+            ' "$tmpfile")
+            [ "${_has:-0}" -gt 0 ] || continue
+        fi
         select_item
         _sel_rc=$?
         if [ "$_sel_rc" -eq 0 ]; then
