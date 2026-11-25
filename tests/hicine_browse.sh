@@ -27,6 +27,13 @@ exit 0
 EOF
 chmod +x "$tmp/curl"
 
+# non-interactive test; stub fzf so dep check passes on runners without it
+cat > "$tmp/fzf" <<'EOF'
+#!/bin/sh
+head -n 1
+EOF
+chmod +x "$tmp/fzf"
+
 check() { # $1 = collection, $2 = expected query fragment
     : > "$tmp/log"
     _err="$tmp/err.$1"
