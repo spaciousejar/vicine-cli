@@ -922,10 +922,13 @@ play_url() {
             fi
             ;;
         *mpv*)
+            # Large remote MKV/WEB-DL: force seekability, disable ytdl probing,
+            # and keep a read-ahead cache so seeking past buffered range works.
+            _mpv_remote="--force-seekable=yes --no-ytdl --cache=yes --demuxer-max-bytes=256MiB --demuxer-readahead-secs=120 --stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"
             if [ "$no_detach" = 0 ] && [ "$exit_after_play" = 0 ]; then
-                nohup "$player_function" $_hdr --force-seekable=yes --no-ytdl --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
+                nohup "$player_function" $_hdr $_mpv_remote --force-media-title="$_name" "$_url" > "$tmpfile4" 2>&1 & _player_pid=$!
             else
-                "$player_function" $_hdr --force-seekable=yes --no-ytdl --force-media-title="$_name" "$_url"
+                "$player_function" $_hdr $_mpv_remote --force-media-title="$_name" "$_url"
                 _pl_rc=$?
                 return "$_pl_rc"
             fi
