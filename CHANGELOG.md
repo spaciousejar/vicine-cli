@@ -5,18 +5,9 @@ All notable changes to **vicine** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.8.1] - 2026-11-05
-### Fixed
-- The watch-history lock is now a file carrying the holder's pid, acquired
-  with an atomic `ln` (the pid exists before the lock path does), so a
-  waiter can no longer "break" a live holder that had not written its pid
-  yet — that used to crop up as lost rows under CI load (8 parallel
-  writers left 11 of 13 rows). A dead pid still releases the lock:
-  pre-version directories and pid files left behind by killed runs are
-  inspected and cleared the same way. `tests/history.sh` covers the
-  pre-upgrade lock shapes and the 8-writer race.
+## [Unreleased]
 
-## [1.8.0] - 2026-11-05
+## [1.9.0] - 2026-11-25
 ### Added
 
 - Termux (Android) support. Termux reports `uname -s` as Linux, so vicine
@@ -29,27 +20,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `install.sh` uses `pkg` (plus the `x11` repo for `mpv`) with no `sudo`,
   installing into `$PREFIX/bin`. `tests/termux.sh` pins all of it.
 
+### Changed
+
+- Hicine uses the public `/hapi` endpoints; catalog, browse, search, and
+  source resolution follow the current API shape and fail with clear errors
+  instead of silent empty results.
+- GitHub Actions workflows pin actions by SHA, add explicit permissions where
+  needed, and harden workflow inputs.
+
 ### Removed
+
 - Ubuntu PPA distribution and its `ppa.yml` workflow; `debian/` packaging and
   the Launchpad git mirror went with it. [verify-channels] now checks six
   channels (npm, GitHub Release, AUR, Homebrew tap, Scoop bucket, Nix flake).
 
 ### Fixed
+
 - Search and download runs no longer mask failure exit codes. A dead API
   behind a `-d`/`-D` run (or behind the `-D -A` anime fallback) used to exit
   0 and look like success to any script wrapping vicine; the failure rc now
   propagates to the shell. Interactive play and plain browsing keep exiting
   0. `tests/exit_codes.sh` pins the paths.
-
 - The watch-history lock is now a file carrying the holder's pid, acquired
   with an atomic `ln` (the pid exists before the lock path does), so a
-  waiter can no longer "break" a live holder that had not written its pid
-  yet — that used to crop up as lost rows under CI load (8 parallel
-  writers left 11 of 13 rows). A dead pid still releases the lock:
-  pre-version directories and pid files left behind by killed runs are
-  inspected and cleared the same way. `tests/history.sh` covers the
-  pre-upgrade lock shapes and the 8-writer race.
-
+  waiter can no longer break a live holder that had not written its pid yet.
+  A dead pid still releases the lock; pre-version directories and pid files
+  left behind by killed runs are inspected and cleared the same way. On
+  filesystems that reject hard links (such as Termux), vicine falls back to
+  a mkdir lock. `tests/history.sh` covers the lock shapes and the 8-writer
+  race.
+- Termux behavior is verified on a phone: temp files stage under `$TMPDIR`,
+  `is_termux` detection is consistent, install target tests clear ambient
+  Termux env, and Termux self-checks cover the real device path.
 - AniDB search results decode `&amp;` (last in the existing HTML-entity
   chain, after `&#39;`/`&quot;`), so titles containing an ampersand no
   longer show the raw entity.
