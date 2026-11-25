@@ -453,7 +453,11 @@ resolve_stream_url() {
     # the Location header is remote text too; a non-http value would reach curl
     # as an option (--config=FILE) at the next probe. Fall back to the worker.
     is_http_url "$_real_url" || _real_url=""
-    [ -n "$_real_url" ] && printf "%s" "$_real_url" || printf "%s" "$_workers_url"
+    if [ -n "$_real_url" ]; then
+        printf "%s" "$_real_url"
+    else
+        printf "%s" "$_workers_url"
+    fi
 }
 
 # ─── Parse links ────────────────────────────────────────────────────────────
@@ -1696,15 +1700,20 @@ cmd_catalog() { # $1 = home payload key, $2 = display label, $3 = contentType fi
     if [ -n "$3" ]; then
         jq -c --arg ct "$3" 'map(select(.contentType == $ct))' "$tmpfile" > "${tmpfile}.ct" && mv "${tmpfile}.ct" "$tmpfile"
     fi
-    [ "$info_only" -eq 1 ] || jq -c '.[0:40]' "$tmpfile" > "${tmpfile}.lim" && mv "${tmpfile}.lim" "$tmpfile"
+    if [ "$info_only" -ne 1 ] && [ -z "$select_nth" ] && [ "$download_all_mode" -ne 1 ]; then
+        jq -c '.[0:40]' "$tmpfile" > "${tmpfile}.lim" && mv "${tmpfile}.lim" "$tmpfile"
+    fi
     select_item || return 0
     hicine_enrich_item
     if [ "$download_all_mode" = 1 ]; then
         download_all_item
         return
     fi
-    [ "$info_only" -eq 1 ] && show_info
-    [ "$info_only" -eq 0 ] && prompt_action
+    if [ "$info_only" -eq 1 ]; then
+        show_info
+    else
+        prompt_action
+    fi
 }
 
 cmd_trending() { # ${1} = movies|series; /hapi/home serves one mixed trending row
@@ -1738,8 +1747,11 @@ cmd_browse() {
         download_all_item
         return
     fi
-    [ "$info_only" -eq 1 ] && show_info
-    [ "$info_only" -eq 0 ] && prompt_action
+    if [ "$info_only" -eq 1 ]; then
+        show_info
+    else
+        prompt_action
+    fi
 }
 
 # ─── Anime provider
@@ -1879,7 +1891,11 @@ anime_pick_quality() {
         worst) _result=$(printf "%s" "$_links" | grep -E '^[0-9]{3,4}' | tail -n 1) ;;
         *)     _result=$(printf "%s" "$_links" | grep -m 1 -F "$quality") ;;
     esac
-    [ -z "$_result" ] && printf "%s" "$_links" | head -n 1 || printf "%s" "$_result"
+    if [ -z "$_result" ]; then
+        printf "%s" "$_links" | head -n 1
+    else
+        printf "%s" "$_result"
+    fi
 }
 
 # play anime: resolves stream URL and reuses hicine player/history
