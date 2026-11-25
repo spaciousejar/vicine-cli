@@ -29,10 +29,13 @@ chmod +x "$tmp/curl"
 
 check() { # $1 = collection, $2 = expected query fragment
     : > "$tmp/log"
+    _err="$tmp/err.$1"
     CURL_LOG="$tmp/log" PATH="$tmp:$PATH" VICINE_MENU='' \
-        sh "$SRC" -b "$1" -n 0 --page 1 >/dev/null 2>&1
+        sh "$SRC" -b "$1" -i -n 0 --page 1 >/dev/null 2>"$_err" || {
+        _fail "collection '$1' exit $?: $(tr '\n' ' ' < "$_err") log=$(tr '\n' ' ' < "$tmp/log")"
+    }
     grep -q "/hapi/browse?$2&page=1" "$tmp/log" || \
-        _fail "collection '$1' requested: $(tr '\n' ' ' < "$tmp/log")"
+        _fail "collection '$1' requested: $(tr '\n' ' ' < "$tmp/log") err=$(tr '\n' ' ' < "$_err")"
 }
 
 check movies            "type=movie&industry=hollywood"
