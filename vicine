@@ -224,9 +224,16 @@ hicine_fetch() { # $1 = endpoint, $2 = output file; dies on failure (read paths)
 }
 
 # Map a /hapi list response (top-level array or {items:[...]}) into the
-# internal item shape the pickers consume: {title, contentType, url_slug}.
+# internal item shape the pickers consume: {title, contentType, url_slug, ...}.
 hicine_map_list() { # $1 = response file, $2 = top-level key holding the array -> mapped array back into $1
-    jq -c --arg k "$2" '[.[$k][]? | {title, contentType: (if .kind == "series" then "series" else "movie" end), url_slug: .id}]' "$1" > "${1}.map" && mv "${1}.map" "$1"
+    jq -c --arg k "$2" '[.[$k][]? | {
+        title,
+        contentType: (if .kind == "series" then "series" else "movie" end),
+        url_slug: .id,
+        year: .year,
+        season: .season,
+        latest: .latest
+    }]' "$1" > "${1}.map" && mv "${1}.map" "$1"
 }
 
 # Host token -> media URL through the /hapi/dl + /hapi/go token chain. Prints
@@ -237,15 +244,22 @@ hicine_host_url() { # $1 = host token, [$2 = scratch file]
     _hu_out="${2:-$tmpfile5}"
     hicine_get "/hapi/dl?k=${1}" "$_hu_out"
     # direct options first; prefer range-seekable URL for remote playback.
-    _hu_opts="$(jq -r '[.options[]? | select(.kind == "direct") | .k] + [.options[]? | select(.kind != "direct") | .k] | .[]' "$_hu_out")"
-    _hu_fallback=""
+    _hu_opts="$(jq -r '[.options[]? | select(.kind == "direct") | "d:" + .k] + [.options[]? | select(.kind != "direct") | "p:" + .k] | .[]' "$_hu_out")"
+    _hu_fallback="" _hu_probe_n=0
     for _hu_opt in $_hu_opts; do
-        hicine_get "/hapi/go?k=${_hu_opt}&m=u" "$_hu_out"
+        _hu_kind=${_hu_opt%%:*}
+        _hu_okey=${_hu_opt#*:}
+        hicine_get "/hapi/go?k=${_hu_okey}&m=u" "$_hu_out"
         _hu_url="$(jq -r '.url // empty' "$_hu_out")"
         [ -n "$_hu_url" ] || continue
         [ -z "$_hu_fallback" ] && _hu_fallback="$_hu_url"
-        _hu_rc="$($curl_exe $curl_to -sSI -o /dev/null -w '%{http_code}' -r 0-0 --max-time 10 "$_hu_url" 2>/dev/null)"
-        [ "$_hu_rc" = "206" ] && { printf '%s' "$_hu_url"; return 0; }
+        # Probe only first 2 direct options to cap latency.
+        if [ "$_hu_kind" = "d" ]; then
+            _hu_probe_n=$((_hu_probe_n + 1))
+            [ "$_hu_probe_n" -le 2 ] || continue
+            _hu_rc="$($curl_exe $curl_to -sSI -o /dev/null -w '%{http_code}' -r 0-0 --max-time 3 "$_hu_url" 2>/dev/null)"
+            [ "$_hu_rc" = "206" ] && { printf '%s' "$_hu_url"; return 0; }
+        fi
     done
     [ -n "$_hu_fallback" ] && { printf '%s' "$_hu_fallback"; return 0; }
     return 1
@@ -274,7 +288,7 @@ hicine_token_url() { # $1 = token, $2 = scratch file
         _tu_url="$(hicine_host_url "$_tu_hk" "$2")" || continue
         [ -n "$_tu_url" ] || continue
         [ -z "$_tu_fallback" ] && _tu_fallback="$_tu_url"
-        _tu_rc="$($curl_exe $curl_to -sSI -o /dev/null -w '%{http_code}' -r 0-0 --max-time 10 "$_tu_url" 2>/dev/null)"
+        _tu_rc="$($curl_exe $curl_to -sSI -o /dev/null -w '%{http_code}' -r 0-0 --max-time 3 "$_tu_url" 2>/dev/null)"
         [ "$_tu_rc" = "206" ] && { printf '%s' "$_tu_url"; return 0; }
     done
     [ -n "$_tu_fallback" ] && { printf '%s' "$_tu_fallback"; return 0; }
@@ -556,11 +570,13 @@ movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
         [ "$_mi" -gt 1 ] && warn "Trying next source..." >&2
         _mr="$(resolve_stream_url "$_mu")"
         [ -n "$_mr" ] || continue
-        # a 200 isn't enough: source pages serve HTML at 200 (pixeldrain
-        # /u/ pages do), JSON/JSONP, and text error pages count too.
-        # Body-sniff the first bytes — same reject-set _stage_ok uses —
-        # instead of trusting the status code.
-        _body="$($curl_exe $curl_to -s -r 0-31 --max-time 10 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
+        # Prefer range-seekable media; 206 is a strong media signal.
+        _rc="$($curl_exe $curl_to -sSI -o /dev/null -w '%{http_code}' -r 0-0 --max-time 4 "$_mr" 2>/dev/null)"
+        if [ "$_rc" = "206" ]; then
+            printf '%s' "$_mr"; return 0
+        fi
+        # Not range-seekable: body-sniff to reject pages/error bodies.
+        _body="$($curl_exe $curl_to -s -r 0-31 --max-time 6 "$_mr" 2>/dev/null | tr -d '\000\n\t\r ' | tr '[:upper:]' '[:lower:]')"
         case "${_body:-}" in
             "") warn "Source unreachable — next quality." >&2; continue ;;
             \<\!doc*|\<html*|\<\?xml*|\{*|\[*)
@@ -569,12 +585,6 @@ movie_playable() { # parsed lines -> resolved URL (stdout), 1 = nothing alive
                 warn "Source rejected the link — next quality." >&2; continue ;;
         esac
         [ -z "$_fallback" ] && _fallback="$_mr"
-        # Prefer range-seekable media so player forward/back seek works on
-        # remote files; some hosts return 200 for Range and break seeking.
-        # Use HEAD+Range probe: a 200-body Range response can stream the whole
-        # file, so do not download body.
-        _rc="$($curl_exe $curl_to -sSI -o /dev/null -w '%{http_code}' -r 0-0 --max-time 10 "$_mr" 2>/dev/null)"
-        [ "$_rc" = "206" ] && { printf '%s' "$_mr"; return 0; }
     done <<EOF
 $(printf '%s\n' "$1" |
         awk -F'\t' -v q="$quality" '
@@ -616,10 +626,15 @@ select_item() {
         return 0
     fi
 
-    # Build display list (1-based, like the anime menu): "1  Title  [type]".
-    # Titles carry their own release year; the API's date is an upload
-    # timestamp, so appending it showed a year that isn't the film's.
-    jq -r 'to_entries[] | "\(.key + 1)  \(.value.title // "Untitled")  [\(.value.contentType // "movie")]"' "$tmpfile" | hdec > "$tmpfile3"
+    # Build display list: "1  Title  [type]  extra"
+    jq -r 'to_entries[] | .key as $i | .value |
+        (if .contentType == "series" then
+            ([.season|tostring|select(length>0 and . != "null")| "S"+.] + [.latest|tostring|select(length>0 and . != "null")]) | join(" ")
+         else
+            (.year|tostring|select(length>0 and . != "null"))
+         end) as $extra |
+        "\($i + 1)\t\(.title // "Untitled")\t\(.contentType // "movie")\t\($extra)"' "$tmpfile" \
+        | awk -F'\t' '{e=$4; if(length(e)>0) e="  "$4; printf "%s  %s  [%s]%s\n",$1,$2,$3,e}' | hdec > "$tmpfile3"
 
     _selection=$(menu "Select (${_count} results): " < "$tmpfile3") || return 2   # 2 = user cancelled
     [ -z "$_selection" ] && return 2
@@ -1681,6 +1696,7 @@ cmd_catalog() { # $1 = home payload key, $2 = display label, $3 = contentType fi
     if [ -n "$3" ]; then
         jq -c --arg ct "$3" 'map(select(.contentType == $ct))' "$tmpfile" > "${tmpfile}.ct" && mv "${tmpfile}.ct" "$tmpfile"
     fi
+    [ "$info_only" -eq 1 ] || jq -c '.[0:40]' "$tmpfile" > "${tmpfile}.lim" && mv "${tmpfile}.lim" "$tmpfile"
     select_item || return 0
     hicine_enrich_item
     if [ "$download_all_mode" = 1 ]; then
