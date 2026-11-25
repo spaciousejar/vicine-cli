@@ -73,8 +73,9 @@ menu() {
 picker() {
     _pick_list="$(cat)"
     if [ -n "$select_nth" ]; then
+        case "$select_nth" in ''|*[!0-9]*) die "Selection must be a non-negative integer: $select_nth" ;; esac
         _pick_n="$(printf '%s\n' "$_pick_list" | grep -c .)"
-        [ "$select_nth" -lt "$_pick_n" ] 2>/dev/null || die "Selection ${select_nth} out of range (0-$((_pick_n - 1)))"
+        [ "$select_nth" -lt "$_pick_n" ] || die "Selection ${select_nth} out of range (0-$((_pick_n - 1)))"
         _pick="$(printf '%s\n' "$_pick_list" | sed -n "$((select_nth + 1))p")"
     else
         _pick="$(printf '%s\n' "$_pick_list" | menu "$1" $2)" || true
@@ -619,8 +620,9 @@ select_item() {
     # Non-interactive select-nth (e.g. -n 2) — validated before the
     # single-result auto-pick so -n 9 with one result doesn't silently play it
     if [ -n "$select_nth" ]; then
+        case "$select_nth" in ''|*[!0-9]*) die "Selection must be a non-negative integer: $select_nth" ;; esac
         _idx="$select_nth"
-        [ "$_idx" -ge "$_count" ] 2>/dev/null && die "Selection ${_idx} out of range (0-$((_count - 1)))"
+        [ "$_idx" -ge "$_count" ] && die "Selection ${_idx} out of range (0-$((_count - 1)))"
         jq ".[${_idx}]" "$tmpfile" > "$tmpfile2"
         return 0
     fi
@@ -2025,8 +2027,9 @@ cmd_anime() {
 
     # select anime (index-prefixed non-interactive or menu)
     if [ -n "$select_nth" ]; then
+        case "$select_nth" in ''|*[!0-9]*) die "Selection must be a non-negative integer: $select_nth" ;; esac
         _ncount=$(printf "%s\n" "$anime_list" | wc -l | tr -d ' ')
-        [ "$select_nth" -ge "$_ncount" ] 2>/dev/null && die "Selection ${select_nth} out of range (0-$((_ncount - 1)))"
+        [ "$select_nth" -ge "$_ncount" ] && die "Selection ${select_nth} out of range (0-$((_ncount - 1)))"
         _result="$(printf "%s\n" "$anime_list" | sed -n "$((select_nth + 1))p")"
     else
         _result="$(printf "%s\n" "$anime_list" | numbered_menu "Select anime: ")"
