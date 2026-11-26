@@ -1,7 +1,7 @@
 #!/bin/sh
 # vicine - Watch and download anything from terminal
 
-version_number="1.9.0"
+version_number="1.9.1"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
@@ -1122,7 +1122,7 @@ do_download() {
             fi
             case "$_probe" in
                 401|403|404|410)
-                    warn "Source rejected the link (HTTP ${_probe}) — provider-side block or dead CDN. Try again later, a different quality, or -A for anime."
+                    warn "Source rejected the link (HTTP ${_probe}). Try another quality, -A for anime, or retry later."
                     return 1 ;;
             esac ;;
     esac
@@ -1607,6 +1607,7 @@ provider_chain() {
         cmd_anime "$1"
         return $?
     fi
+    warn "No result on ${HICINE_BASE} ($2)."
     return 1
 }
 
@@ -1656,25 +1657,31 @@ cmd_search() {
           ] as $scored |
           ($scored | map(select(
               if ($qnums|length) > 0 then (.ns == ($qnums|length) and .ws > 0)
-              else (.ws > 0) end
+              elif ($qwords|length) > 0 then (.ws > 0)
+              else true end
             ))) as $filtered |
-          (if ($filtered|length) > 0 then $filtered else $scored end)
+          (if (($qwords|length) > 0 or ($qnums|length) > 0) then $filtered else $scored end)
           | sort_by(-.ns, -.ws, .tlen)
           | map(.it)
         ' "$tmpfile" > "${tmpfile}.rank" && mv "${tmpfile}.rank" "$tmpfile"
-        if printf '%s' "$_query" | grep -q '[0-9]'; then
-            _has=$(jq -r --arg q "$_query" '
-              def toks: ascii_downcase | gsub("[^a-z0-9]+";" ") | gsub("^ +| +$";"") | split(" ") | map(select(length>0));
-              ($q|toks) as $qt |
-              ($qt|map(select(test("^[0-9]+$")|not))|map(select(length>1))) as $qwords |
-              ($qt|map(select(test("^[0-9]+$")))) as $qnums |
-              [ .[] | ((.title//"")|toks) as $tt |
-                ([ $qwords[] as $w | select($tt|index($w)) | 1 ] | length) as $ws |
-                ([ $qnums[]  as $n | select($tt|index($n)) | 1 ] | length) as $ns |
-                select($ns == ($qnums|length) and $ws > 0) ] | length
-            ' "$tmpfile")
-            [ "${_has:-0}" -gt 0 ] || continue
-        fi
+        # drop low-confidence matches: a nonsense query should not resolve to a
+        # random popular title. Require at least one meaningful query word to
+        # appear in the title; numbered queries also require the number.
+        _has=$(jq -r --arg q "$_query" '
+          def toks: ascii_downcase | gsub("[^a-z0-9]+";" ") | gsub("^ +| +$";"") | split(" ") | map(select(length>0));
+          ($q|toks) as $qt |
+          ($qt|map(select(test("^[0-9]+$")|not))|map(select(length>1))) as $qwords |
+          ($qt|map(select(test("^[0-9]+$")))) as $qnums |
+          [ .[] | ((.title//"")|toks) as $tt |
+            ([ $qwords[] as $w | select($tt|index($w)) | 1 ] | length) as $ws |
+            ([ $qnums[]  as $n | select($tt|index($n)) | 1 ] | length) as $ns |
+            select(
+              if ($qnums|length) > 0 then ($ns == ($qnums|length) and $ws > 0)
+              elif ($qwords|length) > 0 then ($ws > 0)
+              else true end
+            ) ] | length
+        ' "$tmpfile")
+        [ "${_has:-0}" -gt 0 ] || continue
         select_item
         _sel_rc=$?
         if [ "$_sel_rc" -eq 0 ]; then
@@ -1688,8 +1695,8 @@ cmd_search() {
         [ "$_sel_rc" = 2 ] && return 0
     done
     _pc_rc=0
-    provider_chain "$_query" "no results" || _pc_rc=$?
-    [ "$_pc_rc" -eq 0 ] || warn "No results found for: $_query"
+    provider_chain "$_query" "no confident match" || _pc_rc=$?
+    [ "$_pc_rc" -eq 0 ] || warn "No confident match for: $_query"
     return "$_pc_rc"
 }
 
@@ -2022,7 +2029,7 @@ cmd_anime() {
     # chain it must return so the next provider gets a turn
     if [ -z "$anime_list" ]; then
         [ -n "$_in_chain" ] && return 1
-        die "No results found."
+        die "No confident match found."
     fi
 
     # select anime (index-prefixed non-interactive or menu)
@@ -2770,6 +2777,8 @@ case "$search_mode" in
     info)
         [ -z "$query" ] && die "Missing query for info"
         cmd_search "$query"
+        _rc=$?
+        [ "$_rc" -ne 0 ] && exit "$_rc"
         ;;
     download_all)
         [ -z "$query" ] && die "Missing query"

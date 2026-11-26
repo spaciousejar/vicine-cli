@@ -20,7 +20,7 @@ grep -q 'if \[ "\$info_only" -eq 1 \]; then show_info; else prompt_action; fi' "
 # 1. the provider-chain rc is kept: its exit is the download-all result when
 #    anime fallback does the whole run; the warn only adds a message, it
 #    does not change the code
-grep -q 'provider_chain "\$_query" "no results" || _pc_rc=\$?' "$SCRIPT" \
+grep -q 'provider_chain "\$_query" "no confident match" || _pc_rc=\$?' "$SCRIPT" \
     || _fail "cmd_search no longer records the fallback provider's exit status"
 
 # 2. the -D -A fallback entry point exits with that rc

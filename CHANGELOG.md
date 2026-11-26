@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-11-26
+### Changed
+
+- Search now treats nonsense or low-confidence queries as no confident match
+  instead of selecting an unrelated popular title. Info mode reports provider
+  misses clearly and exits non-zero on search/provider failure.
+
+### Added
+
+- README now documents a verified install path and a Trust & safety section
+  covering remote-script execution, provider-data limits, and search confidence.
+
 ## [1.9.0] - 2026-11-25
 ### Added
 

@@ -35,6 +35,18 @@ See the [CHANGELOG](CHANGELOG.md) for release history.
 > MegaPlay-based servers, which can't be resolved by the script — those show
 > "No sources found".
 
+## Trust & safety
+
+- **Remote code:** the one-liner installer and `vicine -U` fetch remote scripts.
+  `-U` only accepts HTTPS URLs under `raw.githubusercontent.com/spaciousejar/vicine-cli/`,
+  refuses dot/encoded path segments, and syntax-checks before atomic replace; it
+  is still a trust decision, not a cryptographic verification.
+- **Provider data:** titles, URLs, and metadata come from third-party providers.
+  Vicine validates stream URLs as HTTP(S) and probes sources before playback,
+  but it cannot guarantee provider correctness or availability.
+- **Search confidence:** nonsense or low-confidence queries return "no confident
+  match" instead of selecting an unrelated popular title.
+
 ## Installation
 
 ### One-liner installer
@@ -52,6 +64,20 @@ curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/inst
 The installer installs `curl jq fzf mpv yt-dlp` (via apt/pacman/dnf/apk,
 `pkg` on Termux, or Homebrew) and the script itself; `--no-deps` skips the
 packages.
+
+### Verified install
+
+The one-liner runs remote code. For a verified install, download the script,
+inspect it, then install:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/spaciousejar/vicine-cli/master/vicine -o vicine
+sh -n vicine
+install -Dm755 vicine ~/.local/bin/vicine
+```
+
+For releases, prefer a package manager (AUR/Homebrew/Scoop/Nix/npm) or verify
+the tagged release artifact from GitHub Releases before installing.
 
 ### AUR (Arch)
 

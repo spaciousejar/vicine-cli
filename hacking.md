@@ -28,7 +28,9 @@ arrives as one archive (`.season_zip`) and returns 0/1 for "handled" /
 
 1. `cmd_search` → `GET https://hicine.biz/hapi/search?q={encoded_query}&page=1`,
    whose `{items:[...]}` is mapped to `{title, contentType, url_slug}` rows.
-   A miss retries with whitespace hyphenated, then removed.
+   A miss retries with whitespace hyphenated, then removed. Results are then
+   filtered by confidence: meaningful query words (and required numbers) must
+   appear in titles, or the query is treated as no confident match.
 2. `select_item` offers the results (fzf/rofi/dmenu or `-n`), writes the
    chosen item JSON to `tmpfile2`. `hicine_enrich_item` then fetches
    `/hapi/t?c=<id>` and fills in the same `links` / `season_N` fields the
